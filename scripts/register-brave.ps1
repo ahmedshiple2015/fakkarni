@@ -1,4 +1,5 @@
 param(
+    [ValidateSet('Brave', 'Edge')][string]$Browser = 'Brave',
     [string]$BinaryPath = (Join-Path (Split-Path $PSScriptRoot -Parent) 'target\debug\fakkarni-native-host.exe')
 )
 $ErrorActionPreference = 'Stop'
@@ -28,6 +29,9 @@ $registryPaths = @(
     'HKCU:\Software\BraveSoftware\Brave-Browser\NativeMessagingHosts\org.fakkarni.bridge',
     'HKCU:\Software\Google\Chrome\NativeMessagingHosts\org.fakkarni.bridge'
 )
+if ($Browser -eq 'Edge') {
+    $registryPaths = @('HKCU:\Software\Microsoft\Edge\NativeMessagingHosts\org.fakkarni.bridge')
+}
 foreach ($registryPath in $registryPaths) {
     New-Item -Path $registryPath -Force | Out-Null
     Set-Item -LiteralPath $registryPath -Value $manifestPath
@@ -35,5 +39,5 @@ foreach ($registryPath in $registryPaths) {
         throw 'Could not verify Fakkarni native host registration.'
     }
 }
-Write-Output 'Fakkarni native host registered for Brave for this Windows user only.'
-Write-Output 'Load the unpacked extension directory in brave://extensions, then open and unlock Fakkarni.'
+Write-Output "Fakkarni native host registered for $Browser for this Windows user only."
+Write-Output 'Load the unpacked extension directory in your browser, then open and unlock Fakkarni.'

@@ -1,6 +1,9 @@
 import { httpsOrigin, validateResponse } from "./validators.js";
 
 const host = "org.fakkarni.bridge";
+const browserName = /Edg\//.test(navigator.userAgent) ? "Edge" : "Brave";
+const registrationScript = browserName === "Edge" ? "register-edge.ps1" : "register-brave.ps1";
+const extensionsPage = browserName === "Edge" ? "edge://extensions" : "brave://extensions";
 const originLabel = document.querySelector<HTMLElement>("#origin")!;
 const state = document.querySelector<HTMLElement>("#state")!;
 const list = document.querySelector<HTMLElement>("#matches")!;
@@ -22,7 +25,7 @@ async function load() {
   ) {
     originLabel.textContent = "Extension preview";
     setState(
-      "Load this extension in Brave to connect to your local desktop vault. This preview cannot access accounts.",
+      "Load this extension in Brave or Edge to connect to your local desktop vault. This preview cannot access accounts.",
     );
     return;
   }
@@ -51,13 +54,13 @@ async function load() {
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
       if (/not found|not registered/i.test(message)) {
-        connectionError = "Brave cannot find the Fakkarni browser bridge. Run scripts/register-brave.ps1, restart Brave, then retry. (HOST_NOT_FOUND)";
+        connectionError = `${browserName} cannot find the Fakkarni browser bridge. Run scripts/${registrationScript}, restart ${browserName}, then retry. (HOST_NOT_FOUND)`;
       } else if (/forbidden|not allowed|permission/i.test(message)) {
-        connectionError = "Brave denied this extension access to the bridge. Check its ID at brave://extensions and reinstall the bridge. (HOST_DENIED)";
+        connectionError = `${browserName} denied this extension access to the bridge. Check its ID at ${extensionsPage} and reinstall the bridge. (HOST_DENIED)`;
       } else if (/exited|disconnect|communicat|launch|start/i.test(message)) {
-        connectionError = "Brave could not start or communicate with the Fakkarni bridge. Reinstall the bridge and restart Brave. (HOST_CONNECTION_FAILED)";
+        connectionError = `${browserName} could not start or communicate with the Fakkarni bridge. Reinstall the bridge and restart ${browserName}. (HOST_CONNECTION_FAILED)`;
       } else {
-        connectionError = "Brave could not connect to the Fakkarni browser bridge. Restart Brave and retry. (NATIVE_MESSAGE_FAILED)";
+        connectionError = `${browserName} could not connect to the Fakkarni browser bridge. Restart ${browserName} and retry. (NATIVE_MESSAGE_FAILED)`;
       }
       raw = { version: 1, status: "unavailable", matches: [] };
     }

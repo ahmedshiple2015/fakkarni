@@ -17,3 +17,7 @@ The popup sends only the top-level HTTPS origin to `org.fakkarni.bridge` over br
 Run `node --test extension/tests/validators.test.mjs` after building. Opening `popup.html` in a normal browser shows a nonfunctional preview with no account access.
 
 On Windows, scripts/register-brave.ps1 registers the host for the current user in both Brave's native-host location and the Chrome-compatible location used by Chromium's Windows launcher. Both point to the same manifest, allowing only the Fakkarni extension. scripts/unregister-brave.ps1 removes both registrations.
+
+## Microsoft Edge
+
+The same unpacked extension also works in Edge. Run scripts/register-edge.ps1 to install its current-user native-host registration, then load the extension folder at edge://extensions with Developer mode enabled. Keep the desktop vault unlocked and click Refresh accounts. Remove the Edge registration with scripts/unregister-edge.ps1. The native manifest and host permit the same fixed extension ID; no additional origins or permissions are added.
