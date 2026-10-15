@@ -15,7 +15,7 @@ type Status = {
 type Entry = { id: string; title: string; username: string; url: string };
 type FullEntry = Entry & { password: string; notes: string };
 type HelloStatus = { available: boolean; enabled: boolean; reason: string | null };
-let hello: HelloStatus = { available: false, enabled: false, reason: "Windows Hello is available only in the desktop app." };
+let hello: HelloStatus = { available: false, enabled: false, reason: "PIN is available only in the desktop app." };
 type AppSettings = { startWithWindows: boolean; closeToTray: boolean; startMinimized: boolean };
 let appSettings: AppSettings = { startWithWindows: false, closeToTray: true, startMinimized: false };
 let settingsError: string | null = null;
@@ -146,7 +146,7 @@ function locked() {
     const button = document.createElement("button");
     button.id = "hello-unlock";
     button.className = "primary wide hello-unlock";
-    button.innerHTML = `${icon("fingerprint")}<span>Unlock with Windows Hello</span>${icon("arrow")}`;
+    button.innerHTML = `${icon("fingerprint")}<span>Unlock with PIN</span>${icon("arrow")}`;
     button.disabled = !native || !hello.available;
     unlockForm.before(button);
     const fallback = document.createElement("p");
@@ -157,7 +157,7 @@ function locked() {
       if (!native) return;
       const generation = epoch;
       button.disabled = true;
-      message("Complete the Windows Hello prompt…");
+      message("Complete the PIN prompt…");
       try {
         await invoke("unlock_hello");
         if (generation !== epoch) return;
@@ -174,8 +174,8 @@ function locked() {
   const helper = document.createElement("p");
   helper.className = "hint hello-hint";
   helper.textContent = !status.exists
-    ? "You can enable Windows Hello after creating your vault. Keep your master password for recovery."
-    : hello.reason || (hello.enabled ? "Windows handles your PIN, fingerprint, or face. Fakkarni never receives your Windows PIN." : "Enable Windows Hello from inside your vault for quicker unlocking.");
+    ? "You can enable PIN after creating your vault. Keep your master password for recovery."
+    : hello.reason || (hello.enabled ? "Windows handles your PIN, fingerprint, or face. Fakkarni never receives your Windows PIN." : "Enable PIN from inside your vault for quicker unlocking.");
   unlockForm.after(helper);
   if (native) {
     const restore = document.createElement("button");
@@ -234,7 +234,7 @@ async function refresh() {
     const [next, nextHello, nextSettings, nextBrowserSettings] = await Promise.all([
       invoke<Status>("vault_status"),
       invoke<HelloStatus>("hello_status").catch((error): HelloStatus => ({
-        available: false, enabled: false, reason: `Windows Hello is unavailable: ${String(error)}`,
+        available: false, enabled: false, reason: `PIN is unavailable: ${String(error)}`,
       })),
       invoke<AppSettings>("get_app_settings").then(
         (settings) => ({ settings, error: null }),
@@ -278,8 +278,8 @@ function vault() {
   );
   const settings = document.createElement("section");
   settings.className = "hello-settings";
-  settings.setAttribute("aria-label", "Windows Hello settings");
-  settings.innerHTML = `<div class="setting-row"><div class="setting-copy"><h3>Windows Hello</h3><p>${esc(hello.enabled ? "Enabled on this PC. Your master password remains your recovery fallback." : hello.reason || "Use your Windows PIN, fingerprint, or face to unlock.")}</p></div><button class="secondary" id="hello-settings" ${native && (hello.available || hello.enabled) ? "" : "disabled"}>${hello.enabled ? "Disable Windows Hello" : "Enable Windows Hello"}</button></div>`;
+  settings.setAttribute("aria-label", "PIN settings");
+  settings.innerHTML = `<div class="setting-row"><div class="setting-copy"><h3>PIN</h3><p>${esc(hello.enabled ? "Enabled on this PC. Your master password remains your recovery fallback." : hello.reason || "Use your Windows PIN, fingerprint, or face to unlock.")}</p></div><button class="secondary" id="hello-settings" ${native && (hello.available || hello.enabled) ? "" : "disabled"}>${hello.enabled ? "Disable PIN" : "Enable PIN"}</button></div>`;
   document.querySelector("#security-settings")!.append(settings);
   settings.querySelector("button")!.addEventListener("click", () => {
     if (!native) return;
@@ -330,7 +330,7 @@ function renderBrowserFill() {
   panel.id = "browser-fill";
   panel.className = "browser-fill";
   panel.setAttribute("aria-label", "Browser autofill request");
-  panel.innerHTML = `<span class="eyebrow">BROWSER AUTOFILL REQUEST</span><h2>${esc(request.title || "Saved account")}</h2><p class="fill-origin">${esc(request.origin)}</p><p>${esc(request.username || "No username")}</p><p class="hint">${status.unlocked ? "Filling the selected account in your original browser tab…" : "Unlock below with your master password or Windows Hello. The selected account will fill automatically in the original browser tab. No form will be submitted."}</p><button class="secondary" id="reject-browser-fill">Cancel fill</button>`;
+  panel.innerHTML = `<span class="eyebrow">BROWSER AUTOFILL REQUEST</span><h2>${esc(request.title || "Saved account")}</h2><p class="fill-origin">${esc(request.origin)}</p><p>${esc(request.username || "No username")}</p><p class="hint">${status.unlocked ? "Filling the selected account in your original browser tab…" : "Unlock below with your master password or PIN. The selected account will fill automatically in the original browser tab. No form will be submitted."}</p><button class="secondary" id="reject-browser-fill">Cancel fill</button>`;
   document.querySelector("main .topbar")?.after(panel);
   panel.querySelector("#reject-browser-fill")!.addEventListener("click", async () => {
     await invoke("reject_browser_fill", { requestId: request.requestId }).catch(() => {});
@@ -367,7 +367,7 @@ function backupPreferences() {
   const section = document.createElement("section");
   section.className = "desktop-settings backup-settings";
   section.setAttribute("aria-label", "Backup and PC transfer");
-  section.innerHTML = `<div class="backup-copy"><h3>Backup &amp; restore</h3><p class="hint">Export an encrypted copy for backup or transfer to another PC. You will need the backup's master password.</p></div><div class="fill-actions"><button class="secondary" id="create-backup">${icon("upload")}Export encrypted vault</button><button class="secondary" id="restore-backup">${icon("download")}Import / restore vault</button></div><p class="hint">Import replaces this vault, locks it, and resets Windows Hello and locked account suggestions. An encrypted recovery copy is kept.</p><details class="privacy-disclosure"><summary>Keeping backups local</summary><p class="hint">Choose a folder outside cloud sync to keep the exported copy on this device. Windows Hello alone cannot open it on another PC.</p></details><p id="backup-status" role="status"></p>`;
+  section.innerHTML = `<div class="backup-copy"><h3>Backup &amp; restore</h3><p class="hint">Export an encrypted copy for backup or transfer to another PC. You will need the backup's master password.</p></div><div class="fill-actions"><button class="secondary" id="create-backup">${icon("upload")}Export encrypted vault</button><button class="secondary" id="restore-backup">${icon("download")}Import / restore vault</button></div><p class="hint">Import replaces this vault, locks it, and resets PIN and locked account suggestions. An encrypted recovery copy is kept.</p><details class="privacy-disclosure"><summary>Keeping backups local</summary><p class="hint">Choose a folder outside cloud sync to keep the exported copy on this device. PIN alone cannot open it on another PC.</p></details><p id="backup-status" role="status"></p>`;
   document.querySelector("#desktop-settings-group")!.append(section);
   section.querySelector("#restore-backup")!.addEventListener("click", restoreBackup);
   section.querySelector<HTMLButtonElement>("#create-backup")!.addEventListener("click", async (event) => {
@@ -427,7 +427,7 @@ function restoreBackup() {
       if (!result) { feedback.textContent = "File selection cancelled."; button.disabled = false; return; }
       preview = result;
       form.reset();
-      form.innerHTML = `<div class="modal-heading"><h2>Review import</h2></div><p><strong>${esc(result.fileName)}</strong></p><p>${result.entryCount} saved ${result.entryCount === 1 ? "login" : "logins"}</p><p class="hint">${result.hasExistingVault ? "This will replace the current vault. An encrypted recovery copy must be saved successfully before replacement." : "This will create the local vault from this backup."} The restored vault stays locked. Use the backup's master password to reopen it and set up Windows Hello again if wanted.</p><div class="desktop-toggles"><label><input type="checkbox" id="confirm-restore"><span>I understand that restoring replaces the current vault; it does not merge logins.</span></label></div><p id="restore-status" role="status"></p><div class="fill-actions"><button type="button" id="restore-back" class="secondary">Cancel</button><button type="button" id="commit-restore" class="primary" disabled>Import this vault</button></div>`;
+      form.innerHTML = `<div class="modal-heading"><h2>Review import</h2></div><p><strong>${esc(result.fileName)}</strong></p><p>${result.entryCount} saved ${result.entryCount === 1 ? "login" : "logins"}</p><p class="hint">${result.hasExistingVault ? "This will replace the current vault. An encrypted recovery copy must be saved successfully before replacement." : "This will create the local vault from this backup."} The restored vault stays locked. Use the backup's master password to reopen it and set up PIN again if wanted.</p><div class="desktop-toggles"><label><input type="checkbox" id="confirm-restore"><span>I understand that restoring replaces the current vault; it does not merge logins.</span></label></div><p id="restore-status" role="status"></p><div class="fill-actions"><button type="button" id="restore-back" class="secondary">Cancel</button><button type="button" id="commit-restore" class="primary" disabled>Import this vault</button></div>`;
       form.querySelector("#restore-back")!.addEventListener("click", close);
       const commit = form.querySelector<HTMLButtonElement>("#commit-restore")!;
       form.querySelector<HTMLInputElement>("#confirm-restore")!.addEventListener("change", event => { commit.disabled = !(event.currentTarget as HTMLInputElement).checked; });
@@ -516,7 +516,7 @@ function helloSetup() {
   const dialog = document.createElement("dialog");
   dialog.setAttribute("aria-labelledby", "hello-title");
   dialog.setAttribute("aria-describedby", "hello-description");
-  dialog.innerHTML = `<form><div class="modal-heading"><h2 id="hello-title">Enable Windows Hello</h2><button type="button" id="hello-cancel" class="text-button" aria-label="Close">✕</button></div><p id="hello-description" class="hint">Windows Hello protects quick unlock on this PC. Keep your master password: you need it for recovery or another PC. Windows will ask for your PIN, fingerprint, or face in its own prompt. Fakkarni never receives your Windows PIN.</p><label>Confirm master password<input name="password" type="password" required autocomplete="current-password" placeholder="Enter your master password"></label><div id="hello-error" role="status"></div><button class="primary wide">Continue to Windows Hello</button></form>`;
+  dialog.innerHTML = `<form><div class="modal-heading"><h2 id="hello-title">Enable PIN</h2><button type="button" id="hello-cancel" class="text-button" aria-label="Close">✕</button></div><p id="hello-description" class="hint">PIN protects quick unlock on this PC. Keep your master password: you need it for recovery or another PC. Windows will ask for your PIN, fingerprint, or face in its own prompt. Fakkarni never receives your Windows PIN.</p><label>Confirm master password<input name="password" type="password" required autocomplete="current-password" placeholder="Enter your master password"></label><div id="hello-error" role="status"></div><button class="primary wide">Continue to PIN</button></form>`;
   app.append(dialog);
   const form = dialog.querySelector<HTMLFormElement>("form")!;
   const close = () => {
@@ -534,7 +534,7 @@ function helloSetup() {
     field.value = "";
     const button = form.querySelector<HTMLButtonElement>("button.primary")!;
     button.disabled = true;
-    dialog.querySelector("#hello-error")!.textContent = "Complete the Windows Hello prompt…";
+    dialog.querySelector("#hello-error")!.textContent = "Complete the PIN prompt…";
     try {
       await invoke("enable_hello", { password });
       if (generation !== epoch) return;
