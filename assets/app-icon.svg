@@ -1,5 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
-  <rect x="8" y="8" width="240" height="240" rx="58" fill="#8961df"/>
-  <path d="M128 49 65 73v52c0 43 63 78 63 78s63-35 63-78V73Z" fill="none" stroke="#f5efff" stroke-width="13" stroke-linejoin="round"/>
-  <path d="m96 125 23 23 43-47" fill="none" stroke="#f5efff" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/>
+  <title>Fakkarni</title>
+  <rect x="8" y="8" width="240" height="240" rx="56" fill="#252421"/>
+  <rect x="8.75" y="8.75" width="238.5" height="238.5" rx="55.25" fill="none" stroke="#454139" stroke-width="1.5"/>
+  <path transform="translate(32 32) scale(8)" fill="#d1b77e" d="M12 2a6 6 0 0 0-3.5 10.9L6 22h12l-2.5-9.1A6 6 0 0 0 12 2Z"/>
 </svg>
