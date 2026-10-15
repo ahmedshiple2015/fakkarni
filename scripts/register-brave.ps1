@@ -22,8 +22,18 @@ $manifest = @{
     allowed_origins = @("chrome-extension://$($identity.extensionId)/")
 }
 [IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json -Depth 4), [Text.UTF8Encoding]::new($false))
-$registryPath = 'HKCU:\Software\BraveSoftware\Brave-Browser\NativeMessagingHosts\org.fakkarni.bridge'
-New-Item -Path $registryPath -Force | Out-Null
-Set-Item -LiteralPath $registryPath -Value $manifestPath
+# Brave builds can inherit Chromium's Chrome-compatible native-host lookup.
+# The manifest still permits only Fakkarni's extension.
+$registryPaths = @(
+    'HKCU:\Software\BraveSoftware\Brave-Browser\NativeMessagingHosts\org.fakkarni.bridge',
+    'HKCU:\Software\Google\Chrome\NativeMessagingHosts\org.fakkarni.bridge'
+)
+foreach ($registryPath in $registryPaths) {
+    New-Item -Path $registryPath -Force | Out-Null
+    Set-Item -LiteralPath $registryPath -Value $manifestPath
+    if ((Get-Item -LiteralPath $registryPath).GetValue('') -ne $manifestPath) {
+        throw 'Could not verify Fakkarni native host registration.'
+    }
+}
 Write-Output 'Fakkarni native host registered for Brave for this Windows user only.'
 Write-Output 'Load the unpacked extension directory in brave://extensions, then open and unlock Fakkarni.'

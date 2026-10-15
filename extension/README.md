@@ -15,3 +15,5 @@ The unpacked extension ID is `kieggakkiiegglikoiojkbfabpmmahep`. `manifest.json`
 The popup sends only the top-level HTTPS origin to `org.fakkarni.bridge` over browser Native Messaging. It does not send the path, query, fragment, page content, or typed credentials. Account suggestions exist only while the popup is open and are never persisted. A second active-tab check prevents displaying a response for a page that changed during the request.
 
 Run `node --test extension/tests/validators.test.mjs` after building. Opening `popup.html` in a normal browser shows a nonfunctional preview with no account access.
+
+On Windows, scripts/register-brave.ps1 registers the host for the current user in both Brave's native-host location and the Chrome-compatible location used by Chromium's Windows launcher. Both point to the same manifest, allowing only the Fakkarni extension. scripts/unregister-brave.ps1 removes both registrations.
