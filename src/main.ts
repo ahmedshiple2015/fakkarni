@@ -518,7 +518,7 @@ function detail(id: string) {
     if (active) button.focus();
   });
   document.querySelector("#detail")!.innerHTML =
-    `<div class="detail-heading"><span class="avatar big">${esc((entry.title || "?").slice(0, 1).toUpperCase())}</span><h2>${esc(entry.title)}</h2><p>LOGIN DETAILS</p></div><div class="field"><label>Username</label><div>${esc(entry.username || "—")}</div></div><div class="field"><label>Password</label><div class="password-row"><span id="password">••••••••••••</span><button id="reveal" class="text-button">Reveal</button></div></div><div class="field"><label>Website</label><div class="url">${esc(entry.url || "—")}</div></div><button id="edit" class="secondary wide">Edit login</button><p class="hint">Passwords hide automatically after 15 seconds.</p>`;
+    `<div class="detail-heading"><span class="avatar big">${esc((entry.title || "?").slice(0, 1).toUpperCase())}</span><h2>${esc(entry.title)}</h2><p>LOGIN DETAILS</p></div><div class="field"><label>Username</label><div>${esc(entry.username || "—")}</div></div><div class="field"><label>Password</label><div class="password-row"><span id="password">••••••••••••</span><button id="reveal" class="text-button">Reveal</button></div></div><div class="field"><label>Website</label><div class="url">${esc(entry.url || "—")}</div></div><button id="edit" class="secondary wide">Edit login</button><button id="delete-login" class="danger wide">Delete login</button><p class="hint">Passwords hide automatically after 15 seconds.</p>`;
   document.querySelector("#reveal")!.addEventListener("click", async () => {
     const generation = epoch;
     const target = document.querySelector("#password")!;
@@ -547,6 +547,7 @@ function detail(id: string) {
         button.disabled = false;
     }
   });
+  document.querySelector("#delete-login")!.addEventListener("click", () => confirmDelete(entry));
   document.querySelector("#edit")!.addEventListener("click", async () => {
     const generation = epoch;
     try {
@@ -556,6 +557,38 @@ function detail(id: string) {
       if (generation === epoch) message(String(error));
     }
   });
+}
+function confirmDelete(entry: Entry) {
+  if (!native || !status.unlocked || document.querySelector("dialog")) return;
+  const generation = epoch;
+  const dialog = document.createElement("dialog");
+  dialog.setAttribute("aria-labelledby", "delete-title");
+  dialog.innerHTML = `<div class="modal-heading"><h2 id="delete-title">Delete this login?</h2></div><p><strong>${esc(entry.title)}</strong></p><p>${esc(entry.username || "No username")}</p><p class="hint">This removes the login from your current vault and browser suggestions. Exported backups retain their copies. There is no undo inside this vault.</p><p id="delete-status" role="status"></p><div class="fill-actions"><button class="secondary" id="cancel-delete">Cancel</button><button class="danger" id="confirm-delete">Delete login</button></div>`;
+  app.append(dialog);
+  let deleting = false;
+  const close = () => { if (!deleting) { dialog.remove(); document.querySelector<HTMLButtonElement>("#delete-login")?.focus(); } };
+  dialog.querySelector("#cancel-delete")!.addEventListener("click", close);
+  dialog.addEventListener("cancel", event => { event.preventDefault(); close(); });
+  dialog.querySelector<HTMLButtonElement>("#confirm-delete")!.addEventListener("click", async () => {
+    if (deleting) return;
+    deleting = true;
+    dialog.querySelectorAll<HTMLButtonElement>("button").forEach(button => { button.disabled = true; });
+    try {
+      const warning = await invoke<string | null>("delete_entry", {id: entry.id});
+      if (generation === epoch || !document.querySelector("dialog")) {
+        clearSecrets();
+        await refresh();
+      }
+      message(`Login deleted.${warning ? ` ${warning}` : ""}`);
+    } catch (error) {
+      if (generation === epoch && dialog.isConnected) {
+        dialog.querySelector("#delete-status")!.textContent = String(error);
+        dialog.querySelectorAll<HTMLButtonElement>("button").forEach(button => { button.disabled = false; });
+      } else message(String(error));
+    } finally { deleting = false; }
+  });
+  dialog.showModal();
+  dialog.querySelector<HTMLButtonElement>("#cancel-delete")!.focus();
 }
 function editor(entry?: FullEntry) {
   if (document.querySelector("dialog")) return;

@@ -7,7 +7,7 @@ A local-only, open-source desktop password manager for Windows. It runs as a nor
 ## Implemented in the prototype
 
 - Rust vault core with encrypted KDBX 4.1 storage and Argon2id (64 MiB, three passes).
-- Create, unlock, lock, add/edit logins, and secure random password generation.
+- Create, unlock, lock, add/edit/delete logins, and secure random password generation.
 - Dark Tauri desktop interface with local search and explicit, temporary password reveal.
 - Five-minute inactivity locking and Windows session/power event handling.
 - Encrypted temporary writes, atomic replacement, cooperating-instance locking, and external-change detection.

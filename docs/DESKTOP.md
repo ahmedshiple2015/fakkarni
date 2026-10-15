@@ -50,3 +50,7 @@ These safeguards address accidental editor overwrites; they do not establish the
 ## Backup and PC transfer
 
 Use **Export encrypted vault** to create a portable `.kdbx` file and **Import / restore vault** to load it on this or another PC. A preview and explicit replacement confirmation come before any vault change. The current encrypted vault is preserved before replacement, and the restored vault requires unlocking with the export's master password. See [backup and transfer instructions](BACKUPS.md).
+
+## Deleting a login
+
+Select a login, choose **Delete login**, and confirm the account shown. The current encrypted vault is updated atomically; a failed write preserves the prior entry. Deletion also removes cached browser suggestions and cancels a pending fill for that login. Exported backups retain their prior copies; deleting a login is not a secure-erasure operation on older backups or website forms that already received it.

@@ -4,6 +4,43 @@ use std::fs;
 const MASTER: &str = "synthetic test master password";
 
 #[test]
+fn deletion_is_scoped_persistent_locked_and_rolls_back_on_save_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("vault.kdbx");
+    let mut vault = Vault::new(path.clone());
+    vault.create(MASTER).unwrap();
+    let first = vault.save_entry(&login()).unwrap();
+    let mut second_input = login();
+    second_input.title = "Keep this separate login".into();
+    let second = vault.save_entry(&second_input).unwrap();
+    let before_invalid = fs::read(&path).unwrap();
+    assert!(vault.delete_entry("invalid-id").is_err());
+    assert_eq!(fs::read(&path).unwrap(), before_invalid);
+    vault.delete_entry(&first).unwrap();
+    assert!(matches!(vault.reveal(&first), Err(VaultError::NotFound)));
+    assert_eq!(vault.reveal(&second).unwrap(), second_input.password);
+    assert!(matches!(
+        vault.delete_entry(&first),
+        Err(VaultError::NotFound)
+    ));
+    vault.lock();
+    assert!(matches!(
+        vault.delete_entry(&second),
+        Err(VaultError::Locked)
+    ));
+    vault.unlock(MASTER).unwrap();
+    assert_eq!(vault.list().unwrap().len(), 1);
+    assert_eq!(vault.list().unwrap()[0].id, second);
+    fs::write(&path, b"external synthetic replacement").unwrap();
+    assert!(matches!(
+        vault.delete_entry(&second),
+        Err(VaultError::Changed)
+    ));
+    assert_eq!(vault.reveal(&second).unwrap(), second_input.password);
+    assert_eq!(fs::read(&path).unwrap(), b"external synthetic replacement");
+}
+
+#[test]
 fn hello_reauthentication_keeps_session_and_stable_identity() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("vault.kdbx");

@@ -280,6 +280,20 @@ impl Vault {
         Ok(entry.get(fields::PASSWORD).unwrap_or_default().into())
     }
 
+    pub fn delete_entry(&mut self, id: &str) -> Result<()> {
+        let path = self.path.clone();
+        let session = self.active()?;
+        let mut next = session.database.clone();
+        next.root_mut()
+            .entry_mut(parse_id(id)?)
+            .ok_or(VaultError::NotFound)?
+            .remove();
+        let fingerprint = persist(&path, &next, &session.key, Some(session.fingerprint))?;
+        session.database = next;
+        session.fingerprint = fingerprint;
+        Ok(())
+    }
+
     pub fn save_entry(&mut self, input: &EntryInput) -> Result<String> {
         self.save_entry_with_password_update(input, true)
     }

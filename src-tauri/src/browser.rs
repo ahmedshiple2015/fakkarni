@@ -107,6 +107,30 @@ impl BrowserState {
         }
         Ok(())
     }
+    pub fn forget_entry(&self, id: &str) -> Result<(), String> {
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|_| "The login was deleted, but browser metadata cleanup failed.")?;
+        if inner
+            .pending
+            .as_ref()
+            .is_some_and(|pending| pending.entry_id == id)
+        {
+            inner.pending = None;
+        }
+        inner.index.entries.retain(|entry| entry.id != id);
+        let bytes =
+            serde_json::to_vec(&inner.index).map_err(|_| "Browser metadata cleanup failed.")?;
+        if self.persist(&bytes).is_err() {
+            // Fail closed if we cannot update the metadata cache: disable the
+            // index and clear its file rather than retain a deleted account.
+            drop(inner);
+            self.reset_after_restore().map_err(|_| "The login was deleted, but its browser cache could not be removed. Suggestions are disabled in this session; check file permissions before restarting.".to_owned())?;
+            return Err("The login was deleted. Locked account suggestions were reset because their cache could not be updated.".into());
+        }
+        Ok(())
+    }
     /// The extension account click authorizes this exact pending request. Unlocking
     /// resumes it automatically; no additional desktop approval prompt is shown.
     pub fn complete_after_unlock(&self, vault: &SharedState) {
@@ -821,6 +845,51 @@ mod tests {
                 .index
                 .settings
                 .show_accounts_when_locked
+        );
+    }
+
+    #[test]
+    fn deletion_removes_cached_account_and_revokes_its_ready_fill() {
+        let (dir, vault, state, id) = fixture();
+        let other = vault
+            .inner
+            .lock()
+            .unwrap()
+            .vault
+            .save_entry(&fakkarni_vault::EntryInput {
+                id: None,
+                title: "Retained account".into(),
+                username: "retained-user".into(),
+                password: "retained-secret".into(),
+                url: "https://example.test".into(),
+                notes: "".into(),
+            })
+            .unwrap();
+        state
+            .inner
+            .lock()
+            .unwrap()
+            .index
+            .settings
+            .show_accounts_when_locked = true;
+        state.refresh(&mut vault.inner.lock().unwrap().vault);
+        let token = "0123456789abcdef0123456789abcdef";
+        assert_eq!(begin(&vault, &state, &id, token).status, Status::Pending);
+        vault.inner.lock().unwrap().vault.delete_entry(&id).unwrap();
+        state.forget_entry(&id).unwrap();
+        assert!(poll(&vault, &state, "https://example.test", token)
+            .credential
+            .is_none());
+        let reopened = BrowserState::new(dir.path().join("index.json"));
+        let inner = reopened.inner.lock().unwrap();
+        assert_eq!(inner.index.entries.len(), 1);
+        assert_eq!(inner.index.entries[0].id, other);
+        assert!(!fs::read_to_string(dir.path().join("index.json"))
+            .unwrap()
+            .contains(&id));
+        assert_eq!(
+            vault.inner.lock().unwrap().vault.reveal(&other).unwrap(),
+            "retained-secret"
         );
     }
 

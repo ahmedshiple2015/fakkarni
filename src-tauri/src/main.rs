@@ -276,6 +276,42 @@ fn generate_password(length: usize) -> Result<String, String> {
     fakkarni_vault::generate_password(length).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+async fn delete_entry(
+    state: State<'_, Shared>,
+    browser: State<'_, Arc<browser::BrowserState>>,
+    id: String,
+) -> Result<Option<String>, String> {
+    let vault = state.inner().clone();
+    let browser = browser.inner().clone();
+    let epoch = vault.epoch.load(Ordering::SeqCst);
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut guard = vault.inner.lock().map_err(|_| "Vault unavailable.")?;
+        let current = vault.epoch.load(Ordering::SeqCst);
+        if guard.epoch != current {
+            guard.vault.lock();
+            guard.epoch = current;
+        }
+        if epoch != current || vault.blocked() {
+            return Err("Delete cancelled because the vault was locked.".into());
+        }
+        guard
+            .vault
+            .delete_entry(&id)
+            .map_err(|error| error.to_string())?;
+        let warning = browser.forget_entry(&id).err();
+        // Deletion is already committed. Report that accurately if an OS lock
+        // arrives during persistence, while still revoking the session.
+        if vault.epoch.load(Ordering::SeqCst) != epoch || vault.blocked() {
+            guard.vault.lock();
+            guard.epoch = vault.epoch.load(Ordering::SeqCst);
+        }
+        Ok(warning)
+    })
+    .await
+    .map_err(|_| "Delete stopped unexpectedly. Reopen the vault to check its state.".to_owned())?
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
@@ -371,6 +407,7 @@ fn main() {
             edit_entry,
             reveal_password,
             save_entry,
+            delete_entry,
             generate_password,
             hello::hello_status,
             hello::enable_hello,
