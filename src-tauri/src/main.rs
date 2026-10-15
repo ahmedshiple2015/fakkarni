@@ -116,6 +116,70 @@ mod revocation_tests {
         })
         .is_err());
     }
+
+    #[test]
+    fn browser_suggestions_are_scoped_metadata_and_honor_locks() {
+        use fakkarni_browser_bridge::{Request, Status};
+        let dir = tempfile::tempdir().unwrap();
+        let mut vault = Vault::new(dir.path().join("synthetic.kdbx"));
+        vault.create("synthetic browser test master").unwrap();
+        let input = EntryInput {
+            id: None,
+            title: "Example account".into(),
+            username: "synthetic-user".into(),
+            password: "must-never-reach-browser".into(),
+            notes: "private synthetic note".into(),
+            url: "https://example.test/login?private=do-not-send".into(),
+        };
+        vault.save_entry(&input).unwrap();
+        let state = SharedState {
+            inner: Mutex::new(GuardedVault { vault, epoch: 0 }),
+            epoch: AtomicU64::new(0),
+            os_locked: AtomicBool::new(false),
+            suspended: AtomicBool::new(false),
+        };
+        let request = || Request::Match {
+            version: 1,
+            origin: "https://example.test".into(),
+        };
+        let response = browser_suggestions(&state, request());
+        assert_eq!(response.status, Status::Ok);
+        assert_eq!(response.matches.len(), 1);
+        assert_eq!(response.matches[0].url, "https://example.test");
+        assert_eq!(response.matches[0].username, "synthetic-user");
+        assert!(browser_suggestions(
+            &state,
+            Request::Match {
+                version: 1,
+                origin: "https://example.test.attacker.test".into()
+            }
+        )
+        .matches
+        .is_empty());
+        assert_eq!(
+            browser_suggestions(
+                &state,
+                Request::Match {
+                    version: 1,
+                    origin: "https://example.test/login".into()
+                }
+            )
+            .status,
+            Status::Error
+        );
+        {
+            let _busy = state.inner.lock().unwrap();
+            assert_eq!(
+                browser_suggestions(&state, request()).status,
+                Status::Unavailable
+            );
+        }
+        state.revoke();
+        assert_eq!(
+            browser_suggestions(&state, request()).status,
+            Status::Locked
+        );
+    }
 }
 
 #[tauri::command]
@@ -193,6 +257,50 @@ fn generate_password(length: usize) -> Result<String, String> {
     fakkarni_vault::generate_password(length).map_err(|e| e.to_string())
 }
 
+fn browser_suggestions(
+    vault: &SharedState,
+    request: fakkarni_browser_bridge::Request,
+) -> fakkarni_browser_bridge::Response {
+    use fakkarni_browser_bridge::{Match, Request, Response, Status};
+    let Request::Match { version, origin } = request;
+    if version != 1 || fakkarni_vault::validate_origin(&origin).is_err() {
+        return Response::empty(Status::Error);
+    }
+    let epoch = vault.epoch.load(Ordering::SeqCst);
+    if vault.blocked() {
+        return Response::empty(Status::Locked);
+    }
+    let Ok(mut inner) = vault.inner.try_lock() else {
+        return Response::empty(Status::Unavailable);
+    };
+    if inner.epoch != epoch {
+        inner.vault.lock();
+        inner.epoch = epoch;
+    }
+    let matches = match inner.vault.matches(&origin) {
+        Ok(entries) => entries
+            .into_iter()
+            .map(|entry| Match {
+                id: entry.id,
+                title: entry.title,
+                username: entry.username,
+                // Browser suggestions never need the saved URL's path/query/fragment.
+                url: origin.clone(),
+            })
+            .collect(),
+        Err(fakkarni_vault::VaultError::Locked) => return Response::empty(Status::Locked),
+        Err(_) => return Response::empty(Status::Error),
+    };
+    if vault.blocked() || vault.epoch.load(Ordering::SeqCst) != epoch {
+        return Response::empty(Status::Locked);
+    }
+    Response {
+        version: 1,
+        status: Status::Ok,
+        matches,
+    }
+}
+
 fn main() {
     tauri::Builder::default()
         .setup(|app| {
@@ -207,6 +315,14 @@ fn main() {
                 suspended: AtomicBool::new(false),
             });
             app.manage(vault.clone());
+            #[cfg(windows)]
+            {
+                let browser_vault = vault.clone();
+                let bridge = fakkarni_browser_bridge::start_server(move |request| {
+                    browser_suggestions(&browser_vault, request)
+                })?;
+                app.manage(bridge);
+            }
             #[cfg(windows)]
             windows_lock::start(vault.clone(), app.handle().clone())
                 .map_err(std::io::Error::other)?;

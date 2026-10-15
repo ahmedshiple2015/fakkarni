@@ -1,0 +1,9 @@
+{
+  "manifest_version": 3,
+  "name": "Fakkarni — فكرني",
+  "description": "Find matching accounts in your local Fakkarni vault. No cloud, tracking, or automatic filling.",
+  "version": "0.1.0",
+  "permissions": ["activeTab", "nativeMessaging"],
+  "action": { "default_popup": "popup.html", "default_title": "Fakkarni" },
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqGnIumekZWLYo8rpSsWaJEESqM471YqviNplzI36X0KvB2beIclPX/O6HuevOZcAu+GK8qv03UMdh224qT78Zt9LtGhmQgI3zuO0F2Q2gRx2Xk7NBzzvId4or6y1kIeiMLdarrTBETF61jzgX4d5cy3rh7bdSulVbH49E6AcskkQbfBWSRc4aVy+0nDZhkPTyc8/j/Iz2oZ+oqvUe1lpL6pDDxXDmrlOST6KFw7CwGSOm4tvDVY86aXX6tEOUId+VZNbCCi2C/EWBVwcv+5b74CJcaYtnXU8KRNVGmxKGGZGVuerafk3sEkS4VoZHk6t2ZS+NaTNXDAx0VPcibszUwIDAQAB"
+}

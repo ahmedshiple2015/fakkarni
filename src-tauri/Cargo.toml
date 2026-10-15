@@ -12,9 +12,13 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 fakkarni-vault = { path = "../crates/vault-core" }
+fakkarni-browser-bridge = { path = "../crates/browser-bridge" }
 serde = { version = "1", features = ["derive"] }
 tauri = { version = "2", features = [] }
 zeroize = "1"
+
+[dev-dependencies]
+tempfile = "3"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_System_RemoteDesktop", "Win32_System_Power", "Win32_System_LibraryLoader", "Win32_UI_WindowsAndMessaging"] }

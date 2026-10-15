@@ -3,6 +3,7 @@
 /dist/
 /target/
 /src-tauri/gen/
+/extension/dist/
 *.kdbx
 *.kdbx.*
 *.keyx

@@ -7,6 +7,9 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 1420 --strictPort",
     "build": "tsc --noEmit && vite build",
+    "build:extension": "tsc -p extension/tsconfig.json",
+    "test:extension": "node extension/build.mjs && node --test extension/tests/*.test.mjs",
+    "build:bridge": "cargo build -p fakkarni-native-host",
     "desktop": "tauri dev",
     "desktop:build": "tauri build --no-bundle"
   },

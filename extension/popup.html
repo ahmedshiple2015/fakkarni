@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Fakkarni</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <span class="mark" aria-hidden="true">F</span>
+      <div>
+        <h1>Fakkarni <span lang="ar" dir="rtl">فكرني</span></h1>
+        <p>YOUR LOCAL VAULT</p>
+      </div>
+      <span class="local">LOCAL</span>
+    </header>
+    <main>
+      <div class="site-label">CURRENT SITE</div>
+      <div id="origin">Checking active site…</div>
+      <p id="state" role="status" aria-live="polite"></p>
+      <ul id="matches" aria-label="Matching accounts"></ul>
+      <button id="refresh" type="button">
+        Refresh accounts <span aria-hidden="true">↻</span>
+      </button>
+      <p class="hint">
+        Account suggestions only. Open the desktop app to manage your logins.
+      </p>
+    </main>
+    <footer>
+      <span aria-hidden="true">●</span> On your PC. Under your control.
+    </footer>
+    <script type="module" src="dist/popup.js"></script>
+  </body>
+</html>

@@ -1,0 +1,10 @@
+[package]
+name = "fakkarni-native-host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+fakkarni-browser-bridge = { path = "../browser-bridge" }
+fakkarni-vault = { path = "../vault-core" }
+serde_json = "1"
