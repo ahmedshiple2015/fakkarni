@@ -1,5 +1,7 @@
 // Fixed local SVGs: no remote icon or favicon requests.
 const paths = {
+  keyhole: '<path fill="currentColor" stroke="none" d="M12 2a6 6 0 0 0-3.5 10.9L6 22h12l-2.5-9.1A6 6 0 0 0 12 2Z"/>',
+  monitor: '<rect x="3" y="4" width="18" height="13" rx="1"/><path d="M8 21h8m-4-4v4"/>',
   shield: '<path d="M12 3 4 6v6c0 5 8 9 8 9s8-4 8-9V6l-8-3Z"/><path d="m8 12 3 3 5-6"/>',
   key: '<circle cx="8" cy="9" r="5"/><path d="m12 13 8 8m-4-4 3-3m-6 0 3-3"/>',
   settings: '<path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3"/><circle cx="15" cy="17" r="3"/>',

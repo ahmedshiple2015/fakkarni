@@ -1,4 +1,5 @@
 import { httpsOrigin, validateResponse } from "./validators.js";
+import { initialFor, resolveBrandIcon } from "./brand-icons.js";
 
 const host = "org.fakkarni.bridge";
 const browserName = /Edg\//.test(navigator.userAgent) ? "Edge" : "Brave";
@@ -9,6 +10,26 @@ const state = document.querySelector<HTMLElement>("#state")!;
 const list = document.querySelector<HTMLElement>("#matches")!;
 const refresh = document.querySelector<HTMLButtonElement>("#refresh")!;
 const connection = document.querySelector<HTMLElement>("#connection")!;
+const siteIcon = document.querySelector<HTMLElement>("#site-icon")!;
+const hint = document.querySelector<HTMLElement>("#hint")!;
+function serviceIcon(url: string, title: string, className: string) {
+  const wrapper = document.createElement("span");
+  wrapper.className = className;
+  wrapper.setAttribute("aria-hidden", "true");
+  const fallback = document.createElement("span");
+  fallback.textContent = initialFor(title);
+  wrapper.append(fallback);
+  const brand = resolveBrandIcon(url, title);
+  if (brand) {
+    const image = document.createElement("img");
+    image.alt = "";
+    image.src = new URL(`../icons/${brand.slug}.svg`, import.meta.url).href;
+    image.addEventListener("load", () => { fallback.hidden = true; });
+    image.addEventListener("error", () => { image.remove(); fallback.hidden = false; });
+    wrapper.append(image);
+  }
+  return wrapper;
+}
 let generation = 0;
 const setConnection = (status: "checking" | "connected" | "locked" | "unavailable", label: string) => {
   connection.dataset.status = status;
@@ -21,7 +42,10 @@ const setState = (message: string) => {
 async function load() {
   const current = ++generation;
   list.replaceChildren();
+  hint.hidden = true;
   originLabel.textContent = "Checking active site…";
+  originLabel.title = "";
+  siteIcon.replaceChildren(...Array.from(serviceIcon("", "?", "site-icon").childNodes));
   refresh.disabled = true;
   setConnection("checking", "Checking");
   setState("Looking for accounts on this website…");
@@ -50,7 +74,10 @@ async function load() {
       );
       return;
     }
-    originLabel.textContent = origin;
+    const website = new URL(origin).host;
+    originLabel.textContent = website;
+    originLabel.title = origin;
+    siteIcon.replaceChildren(...Array.from(serviceIcon(origin, website, "site-icon").childNodes));
     setState("Checking your local vault…");
     let raw: unknown;
     let connectionError = "";
@@ -116,17 +143,16 @@ async function load() {
       return;
     }
     if (response.status === "ok") setConnection("connected", "Unlocked");
-    setState(response.status === "locked" ? "Vault locked. Choose an account to open Fakkarni and unlock, then this page fills automatically." :
+    hint.hidden = response.status !== "locked";
+    list.setAttribute("aria-label", `${response.matches.length} matching ${response.matches.length === 1 ? "account" : "accounts"}`);
+    setState(response.status === "locked" ? "Choose an account to unlock and fill." :
       response.matches.length
-        ? `${response.matches.length} matching ${response.matches.length === 1 ? "account" : "accounts"}`
+        ? ""
         : "No saved accounts match this site. Add a login in the desktop app.",
     );
     for (const match of response.matches) {
       const row = document.createElement("li");
-      const icon = document.createElement("span");
-      icon.className = "account-icon";
-      icon.setAttribute("aria-hidden", "true");
-      icon.textContent = (match.title || "?").slice(0, 1).toUpperCase();
+      const icon = serviceIcon(origin, match.title, "account-icon");
       const copy = document.createElement("div");
       copy.className = "account-copy";
       const title = document.createElement("strong");
@@ -138,8 +164,11 @@ async function load() {
       button.type = "button";
       button.className = "account-button";
       const action = document.createElement("small");
-      action.textContent = response.status === "locked" ? "Unlock to fill" : "Fill login";
-      copy.append(action);
+      action.className = "fill-action";
+      const actionLabel = document.createElement("span");
+      actionLabel.textContent = "Fill";
+      action.append(actionLabel);
+      if (response.status === "locked") button.setAttribute("aria-label", `Unlock and fill ${match.title || "Untitled login"}, ${match.username || "No username"}`);
       button.append(icon, copy);
       const arrow = document.createElementNS("http://www.w3.org/2000/svg", "svg");
       arrow.setAttribute("viewBox", "0 0 24 24");
@@ -153,11 +182,12 @@ async function load() {
       const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
       path.setAttribute("d", "M5 12h14m-6-6 6 6-6 6");
       arrow.append(path);
-      button.append(arrow);
+      action.append(arrow);
+      button.append(action);
       button.addEventListener("click", async () => {
         button.disabled = true;
         button.setAttribute("aria-busy", "true");
-        action.textContent = "Starting fill…";
+        actionLabel.textContent = "Starting…";
         try {
           const result = await api.runtime.sendMessage({action: "fill_account", tabId: tab.id, url: tab.url, id: match.id});
           if (current !== generation) return;
@@ -177,7 +207,7 @@ async function load() {
           if (current === generation) {
             button.disabled = false;
             button.removeAttribute("aria-busy");
-            action.textContent = response.status === "locked" ? "Unlock to fill" : "Fill login";
+            actionLabel.textContent = "Fill";
           }
         }
       });

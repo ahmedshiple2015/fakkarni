@@ -9,26 +9,27 @@
   </head>
   <body>
     <header>
-      <span class="mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 6v6c0 4.5 8 9 8 9s8-4.5 8-9V6l-8-3Z"/><path d="m8.5 11.5 2.5 2.5 4.5-5"/></svg></span>
-      <div class="brand">
-        <h1>Fakkarni <span lang="ar" dir="rtl">فكرني</span></h1>
-        <p>Your local vault</p>
-      </div>
-      <span class="local" title="Passwords stay on this PC">Local</span>
+      <span class="mark" aria-hidden="true"><svg viewBox="0 0 24 28" fill="currentColor"><path d="M17 7a5 5 0 1 0-8.1 3.9L7 25h10l-1.9-14.1A5 5 0 0 0 17 7Z"/></svg></span>
+      <h1>Fakkarni <span lang="ar" dir="rtl">فكرني</span></h1>
+      <span class="local">Local vault</span>
     </header>
     <main>
       <section class="site" aria-labelledby="site-heading">
-        <div class="section-heading"><h2 id="site-heading">Current website</h2><span id="connection" class="connection" data-status="checking">Checking</span></div>
+        <h2 id="site-heading" class="visually-hidden">Current website</h2>
+        <span id="site-icon" class="site-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18"/></svg></span>
         <div id="origin">Checking active site…</div>
       </section>
       <section class="accounts" aria-labelledby="accounts-heading">
-        <div class="section-heading"><h2 id="accounts-heading">Available accounts</h2><button id="refresh" type="button" aria-label="Refresh accounts" title="Refresh accounts"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7v5h-5"/><path d="M4 17v-5h5"/><path d="M6.1 7a7 7 0 0 1 11.6-1L20 9M4 15l2.3 3A7 7 0 0 0 17.9 17"/></svg><span>Refresh</span></button></div>
+        <h2 id="accounts-heading" class="visually-hidden">Available accounts</h2>
         <p id="state" role="status" aria-live="polite" aria-atomic="true"></p>
         <ul id="matches" aria-label="Matching accounts"></ul>
+        <p id="hint" class="hint" hidden>Unlock in Fakkarni to continue. You review and submit the form.</p>
       </section>
-      <p class="hint">Choose an account to fill. If your vault is locked, unlock it in Fakkarni to continue. You submit the form.</p>
     </main>
-    <footer><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3M12 14v3"/></svg>Stored on your PC. Only on your PC.</footer>
+    <footer>
+      <button id="refresh" type="button" aria-label="Refresh accounts" title="Refresh accounts"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7v5h-5"/><path d="M4 17v-5h5"/><path d="M6.1 7a7 7 0 0 1 11.6-1L20 9M4 15l2.3 3A7 7 0 0 0 17.9 17"/></svg><span>Refresh</span></button>
+      <span class="connection-wrap"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3M12 14v3"/></svg><span id="connection" class="connection" data-status="checking">Checking</span></span>
+    </footer>
     <script type="module" src="dist/popup.js"></script>
   </body>
 </html>

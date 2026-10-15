@@ -4,6 +4,7 @@ import "../extension/theme.css";
 import "./style.css";
 import { entryFormPayload } from "./entry-form";
 import { icon } from "./icons";
+import { initialFor, resolveBrandIcon } from "../extension/src/brand-icons";
 
 type Status = {
   exists: boolean;
@@ -49,7 +50,25 @@ const esc = (s: string) =>
       ]!,
   );
 const shield = icon("shield");
-const brand = `<div class="brand"><span class="brand-icon">${shield}</span><div>Fakkarni <span lang="ar" dir="rtl">فكرني</span><small>Your passwords. Your PC.</small></div></div>`;
+const brand = `<div class="brand"><span class="brand-icon">${icon("keyhole")}</span><div>Fakkarni<small lang="ar" dir="rtl">فكرني</small></div></div>`;
+const brandAssets = import.meta.glob("../extension/icons/*.svg", { eager: true, query: "?url", import: "default" }) as Record<string, string>;
+function accountAvatar(entry: Entry, large = false) {
+  const brand = resolveBrandIcon(entry.url, entry.title);
+  const asset = brand ? brandAssets[`../extension/icons/${brand.slug}.svg`] : undefined;
+  return `<span class="avatar${large ? " big" : ""}" aria-hidden="true"><span>${esc(initialFor(entry.title))}</span>${asset ? `<img src="${esc(asset)}" alt="" hidden>` : ""}</span>`;
+}
+function attachIconFallbacks(root: Element) {
+  root.querySelectorAll<HTMLImageElement>(".avatar img").forEach(img => {
+    const fallback = () => { img.remove(); };
+    const loaded = () => { img.hidden = false; };
+    img.addEventListener("load", loaded, { once: true });
+    img.addEventListener("error", fallback, { once: true });
+    if (img.complete) { if (img.naturalWidth > 0) loaded(); else fallback(); }
+  });
+}
+function siteLabel(url: string) {
+  try { return new URL(url).hostname; } catch { return "Saved login"; }
+}
 function message(text: string) {
   const el = document.querySelector("#message");
   if (el) el.textContent = text;
@@ -69,7 +88,7 @@ function clearSecrets() {
 }
 function shell(content: string) {
   app.dataset.locked = String(!status.unlocked);
-  app.innerHTML = `<aside>${brand}<div class="nav-label">WORKSPACE</div><nav aria-label="Workspace"><button type="button" class="nav active" id="nav-vault" aria-label="All passwords" title="All passwords" aria-current="page" ${status.unlocked ? "" : "disabled"}>${icon("key")}<span class="nav-text">All passwords</span><span class="nav-count">${status.unlocked ? entries.length : "—"}</span></button><button type="button" class="nav" id="nav-settings" aria-label="Settings" title="Settings" ${status.unlocked ? "" : "disabled"}>${icon("settings")}<span class="nav-text">Settings</span></button></nav><div class="sidebar-bottom"><div class="device-status"><span class="local-dot"></span>Local vault</div><small>Stored on this device.<br>No cloud. No tracking.</small></div></aside><main>${content}</main>`;
+  app.innerHTML = `<aside>${brand}<nav aria-label="Workspace"><button type="button" class="nav active" id="nav-vault" aria-label="Passwords" title="Passwords" aria-current="page" ${status.unlocked ? "" : "disabled"}>${icon("key")}<span class="nav-text">Passwords</span></button><button type="button" class="nav" id="nav-settings" aria-label="Settings" title="Settings" ${status.unlocked ? "" : "disabled"}>${icon("settings")}<span class="nav-text">Settings</span></button></nav><div class="sidebar-bottom"><span>${icon("monitor")}<span class="device-label">On this PC</span></span><button class="icon-button" id="lock" aria-label="Lock vault" title="Lock vault" ${status.unlocked ? "" : "disabled"}>${icon("lock")}</button></div></aside><main>${content}</main>`;
   document.querySelector("#nav-vault")!.addEventListener("click", () => selectView("vault"));
   document.querySelector("#nav-settings")!.addEventListener("click", () => selectView("settings"));
 }
@@ -79,9 +98,11 @@ function selectView(next: "vault" | "settings", focus = true) {
   const settings = next === "settings";
   document.querySelector<HTMLElement>("#vault-panel")!.hidden = settings;
   document.querySelector<HTMLElement>("#settings-panel")!.hidden = !settings;
-  document.querySelector("#page-title")!.textContent = settings ? "Settings" : "All passwords";
+  document.querySelector("#page-title")!.textContent = settings ? "Settings" : "Passwords";
+  document.querySelector<HTMLElement>("#workspace-heading")!.hidden = !settings;
+  app.dataset.view = next;
   document.querySelector<HTMLElement>("#page-count")!.hidden = settings;
-  document.querySelector("#page-description")!.textContent = settings ? "Make Fakkarni feel at home on your PC." : "A private home for your everyday logins.";
+  document.querySelector("#page-description")!.textContent = settings ? "Unlock, browser, and desktop preferences." : "";
   for (const [id, active] of [["nav-vault", !settings], ["nav-settings", settings]] as const) {
     const nav = document.querySelector<HTMLButtonElement>(`#${id}`)!;
     nav.classList.toggle("active", active);
@@ -94,13 +115,13 @@ function selectView(next: "vault" | "settings", focus = true) {
     const password = document.querySelector("#password");
     if (password) password.textContent = "••••••••••••";
     const reveal = document.querySelector("#reveal");
-    if (reveal) reveal.textContent = "Reveal";
+    if (reveal) reveal.textContent = "Show";
   }
   if (focus) document.querySelector<HTMLElement>(settings ? "#page-title" : "#search")?.focus();
 }
 function locked() {
   shell(
-    `<div class="topbar"><span class="breadcrumb">Personal vault</span><span class="pill">${icon("lock")}${native ? "Vault locked" : "Design preview"}</span></div><section class="welcome"><div class="large-shield">${shield}</div><div class="eyebrow">YOUR PRIVATE SPACE</div><h1>${status.exists ? "Welcome back." : "A little less<br>to remember."}</h1><p>${native ? (status.exists ? "Your logins are right where you left them. Unlock to continue." : "One master password. All your logins, safely stored on this PC.") : "This browser preview has no vault connection. Open the desktop app to create or unlock your encrypted vault."}</p><form id="unlock"><label>Master password<input id="master" type="password" minlength="${status.exists ? 1 : 12}" required autocomplete="${status.exists ? "current-password" : "new-password"}" ${native ? "" : "disabled"} placeholder="${status.exists ? "Enter your master password" : "At least 12 characters"}"></label>${!status.exists ? `<label>Confirm master password<input id="confirm" type="password" required autocomplete="new-password" ${native ? "" : "disabled"} placeholder="Repeat your master password"></label><small class="hint">Keep it somewhere safe. There is no password reset.</small>` : ""}<button class="primary wide" ${native ? "" : "disabled"}>${status.exists ? "Unlock vault" : "Create my vault"}${icon("arrow")}</button><div id="message" role="status"></div></form><div class="privacy">${shield} Encrypted on your device</div></section>`,
+    `<div class="topbar"><span class="breadcrumb">Personal vault</span><span class="pill">${icon("lock")}${native ? "Vault locked" : "Design preview"}</span></div><section class="welcome"><div class="large-shield">${icon("keyhole")}</div><h1>${status.exists ? "Unlock your vault" : "Create your vault"}</h1><p>${native ? (status.exists ? "Enter your master password to continue." : "Choose a master password to protect your saved logins.") : "This browser preview has no vault connection. Open the desktop app to create or unlock your encrypted vault."}</p><form id="unlock"><label>Master password<input id="master" type="password" minlength="${status.exists ? 1 : 12}" required autocomplete="${status.exists ? "current-password" : "new-password"}" ${native ? "" : "disabled"} placeholder="${status.exists ? "Enter your master password" : "At least 12 characters"}"></label>${!status.exists ? `<label>Confirm master password<input id="confirm" type="password" required autocomplete="new-password" ${native ? "" : "disabled"} placeholder="Repeat your master password"></label><small class="hint">Keep it somewhere safe. There is no password reset.</small>` : ""}<button class="primary wide" ${native ? "" : "disabled"}>${status.exists ? "Unlock vault" : "Create my vault"}${icon("arrow")}</button><div id="message" role="status"></div></form><div class="privacy">${icon("lock")}Stored on this PC</div></section>`,
   );
   const unlockForm = document.querySelector<HTMLFormElement>("#unlock")!;
   renderBrowserFill();
@@ -237,7 +258,7 @@ async function refresh() {
 }
 function vault() {
   shell(
-    `<header class="topbar"><div><div class="breadcrumb">Personal vault <span>/</span> Workspace</div><div class="page-heading"><h1 id="page-title" tabindex="-1">All passwords</h1><span class="count" id="page-count">${entries.length}</span></div><p id="page-description">A private home for your everyday logins.</p></div><button id="lock" class="secondary">${icon("lock")}Lock vault</button></header><div id="vault-panel"><div class="toolbar"><div class="search-wrap">${icon("search")}<input id="search" type="search" placeholder="Search logins…" aria-label="Search passwords"></div><button id="add" class="primary">${icon("plus")}New login</button></div><div class="vault-grid"><section class="accounts-panel" aria-label="Saved passwords"><div class="list-heading"><span>SAVED LOGINS</span><span id="list-count">${entries.length}</span></div><div class="entry-list"></div></section><section id="detail" class="detail" aria-label="Login details"><div class="empty"><div class="large-shield">${icon("key")}</div><h2>${entries.length ? "A place for every login." : "Your vault starts here."}</h2><p>${entries.length ? "Select an account to see its details." : "Add your first login and give your memory a break."}</p></div></section></div></div><div id="settings-panel" hidden><div class="settings-intro"><span class="eyebrow">PREFERENCES</span><p>Unlock, fill, and back up. Just the way you like it.</p></div></div><footer>${shield}<span class="footer-privacy">Encrypted on this device</span><span>Auto-lock · ${status.idleMinutes} minutes</span></footer><div id="message" role="status"></div>`,
+    `<header class="topbar" id="workspace-heading" hidden><div><div class="page-heading"><h1 id="page-title" tabindex="-1">Settings</h1><span class="count" id="page-count" hidden>${entries.length}</span></div><p id="page-description">Unlock, browser, and desktop preferences.</p></div></header><div id="vault-panel"><div class="vault-grid"><section class="accounts-panel" aria-label="Saved passwords"><div class="collection-heading"><h1>Passwords <span class="count" id="list-count">${entries.length}</span></h1><button id="add" class="primary">${icon("plus")}New login</button></div><div class="toolbar"><div class="search-wrap">${icon("search")}<input id="search" type="search" placeholder="Search logins…" aria-label="Search passwords"></div></div><div class="entry-list"></div></section><section id="detail" class="detail" aria-label="Login details"><div class="empty"><div class="large-shield">${icon("keyhole")}</div><h2>${entries.length ? "Select a login" : "No saved logins"}</h2><p>${entries.length ? "Choose an account to view its details." : "Use New login to add your first account."}</p></div></section></div></div><div id="settings-panel" hidden></div><footer><span>Encrypted on this PC</span><span>Auto-lock · ${status.idleMinutes} minutes</span></footer><div id="message" role="status"></div>`,
   );
   const settings = document.createElement("section");
   settings.className = "hello-settings";
@@ -531,10 +552,11 @@ function renderList() {
     list
       .map(
         (entry) =>
-          `<button class="entry ${selected === entry.id ? "selected" : ""}" aria-pressed="${selected === entry.id}" data-id="${esc(entry.id)}"><span class="avatar" aria-hidden="true">${esc((entry.title || "?").slice(0, 1).toUpperCase())}</span><span class="entry-copy"><strong>${esc(entry.title)}</strong><small>${esc(entry.username || "No username")}</small></span><span class="chevron">${icon("chevron")}</span></button>`,
+          `<button class="entry ${selected === entry.id ? "selected" : ""}" aria-pressed="${selected === entry.id}" data-id="${esc(entry.id)}">${accountAvatar(entry)}<span class="entry-copy"><strong>${esc(entry.title)}</strong><small>${esc(entry.username || "No username")}</small></span></button>`,
       )
       .join("") || `<div class="list-empty">${icon("search")}<strong>${entries.length ? "No matching logins" : "No logins yet"}</strong><p>${entries.length ? "Try another name, username, or website." : "Add a login to start filling from your browser."}</p></div>`;
   document.querySelector("#list-count")!.textContent = String(list.length);
+  attachIconFallbacks(document.querySelector(".entry-list")!);
   document
     .querySelectorAll<HTMLButtonElement>(".entry")
     .forEach((el) =>
@@ -553,14 +575,15 @@ function detail(id: string, focus = true) {
     if (active && focus) button.focus();
   });
   document.querySelector("#detail")!.innerHTML =
-    `<div class="detail-heading"><span class="avatar big" aria-hidden="true">${esc((entry.title || "?").slice(0, 1).toUpperCase())}</span><div><span class="eyebrow">LOGIN DETAILS</span><h2>${esc(entry.title)}</h2></div><span class="detail-safe" title="Saved in your encrypted vault">${shield}</span></div><div class="detail-fields"><div class="field"><span class="field-label">Username</span><div>${esc(entry.username || "—")}</div></div><div class="field"><span class="field-label">Password</span><div class="password-row"><span id="password">••••••••••••</span><button id="reveal" class="text-button">Reveal</button></div></div><div class="field"><span class="field-label">Website</span><div class="url">${icon("globe")}<span>${esc(entry.url || "—")}</span></div></div></div><div class="detail-actions"><button id="edit" class="secondary">${icon("edit")}Edit login</button><button id="delete-login" class="danger">${icon("trash")}Delete login</button></div><p class="hint detail-hint">${icon("eye")}Revealed passwords hide after 15 seconds.</p>`;
+    `<div class="detail-heading">${accountAvatar(entry, true)}<div><h2>${esc(entry.title)}</h2><p>${esc(siteLabel(entry.url))}</p></div></div><div class="detail-fields"><div class="field"><span class="field-label">Username</span><div>${esc(entry.username || "—")}</div></div><div class="field"><span class="field-label">Password</span><div class="password-row"><span id="password">••••••••••••</span><button id="reveal" class="text-button">Show</button></div></div><div class="field"><span class="field-label">Website</span><div class="url"><span>${esc(entry.url || "—")}</span></div></div></div><div class="detail-actions"><button id="edit" class="primary">${icon("edit")}Edit login</button><button id="delete-login" class="danger">${icon("trash")}Delete login</button></div><p class="hint detail-hint">Passwords hide after 15 seconds.</p>`;
+  attachIconFallbacks(document.querySelector("#detail")!);
   document.querySelector("#reveal")!.addEventListener("click", async () => {
     const generation = epoch;
     const target = document.querySelector("#password")!;
     const button = document.querySelector<HTMLButtonElement>("#reveal")!;
     if (button.textContent === "Hide") {
       target.textContent = "••••••••••••";
-      button.textContent = "Reveal";
+      button.textContent = "Show";
       window.clearTimeout(hideTimer);
       return;
     }
@@ -573,7 +596,7 @@ function detail(id: string, focus = true) {
       button.textContent = "Hide";
       hideTimer = window.setTimeout(() => {
         target.textContent = "••••••••••••";
-        button.textContent = "Reveal";
+        button.textContent = "Show";
       }, 15000);
     } catch (error) {
       if (generation === epoch && selected === id) message(String(error));
