@@ -379,11 +379,28 @@ mod platform {
             unsafe { std::slice::from_raw_parts(context.as_ptr().cast(), context.len() * 2) };
         set(key, "Use Context", bytes)
     }
-    fn existing(name: &str) -> Result<(Owned, Owned), String> {
+    enum KeyAccess {
+        PublicOnly,
+        InteractivePrivate,
+    }
+    impl KeyAccess {
+        fn flags(&self) -> u32 {
+            match self {
+                Self::PublicOnly => SILENT,
+                Self::InteractivePrivate => 0,
+            }
+        }
+    }
+    fn existing(name: &str, access: KeyAccess) -> Result<(Owned, Owned), String> {
         check_name(name)?;
         let provider = provider()?;
         let mut h = 0;
-        let result = unsafe { NCryptOpenKey(provider.0, &mut h, wide(name).as_ptr(), 0, SILENT) };
+        // A silent-opened Passport handle may retain its no-UI context even
+        // when NCryptDecrypt itself omits SILENT. Private access must permit
+        // Windows UI from the initial open; the mandatory-gesture policy still
+        // enforces fresh verification before it can release any plaintext.
+        let result =
+            unsafe { NCryptOpenKey(provider.0, &mut h, wide(name).as_ptr(), 0, access.flags()) };
         let key = Owned(h);
         status(result, "key access")?;
         verify(&key)?;
@@ -424,7 +441,7 @@ mod platform {
         configured
     }
     pub fn seal(name: &str, plaintext: &[u8], hwnd: isize) -> Result<Vec<u8>, String> {
-        let (_provider, key) = existing(name)?;
+        let (_provider, key) = existing(name, KeyAccess::PublicOnly)?;
         ui(&key, hwnd)?;
         // Passport exposes a public RSA key but need not implement public-key
         // encryption itself. Export no private material, and keep all private
@@ -520,7 +537,7 @@ mod platform {
         Ok(result)
     }
     pub fn open(name: &str, ciphertext: &[u8], hwnd: isize) -> Result<Zeroizing<Vec<u8>>, String> {
-        let (_provider, key) = existing(name)?;
+        let (_provider, key) = existing(name, KeyAccess::InteractivePrivate)?;
         ui(&key, hwnd)?;
         set_number(&key, "PinCacheIsGestureRequired", 1)?;
         let mut result = Zeroizing::new(vec![0; RSA_BYTES]);
