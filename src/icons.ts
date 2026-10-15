@@ -5,7 +5,7 @@ const paths = {
   download: '<path d="M12 3v12m-4-4 4 4 4-4M4 16v5h16v-5"/>',
   upload: '<path d="M12 16V4m-4 4 4-4 4 4M4 16v5h16v-5"/>',
   refresh: '<path d="M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-1l2 3M4 15l2 3a7 7 0 0 0 12-1"/>',
-  fingerprint: '<path d="M6 19c1-2 1-4 1-7a5 5 0 0 1 10 0c0 4-1 7-2 9M4 15v-3a8 8 0 0 1 16 0m-9 9c1-3 2-6 2-9a1 1 0 0 0-2 0c0 3 0 5-1 7M7 5a8 8 0 0 1 10 0M3 8a10 10 0 0 1 18 0"/>',
+  windows: '<path fill="currentColor" stroke="none" d="M3 3h8v8H3Zm10 0h8v8h-8ZM3 13h8v8H3Zm10 0h8v8h-8Z"/>',
   keyhole: '<path fill="currentColor" stroke="none" d="M12 2a6 6 0 0 0-3.5 10.9L6 22h12l-2.5-9.1A6 6 0 0 0 12 2Z"/>',
   monitor: '<rect x="3" y="4" width="18" height="13" rx="1"/><path d="M8 21h8m-4-4v4"/>',
   shield: '<path d="M12 3 4 6v6c0 5 8 9 8 9s8-4 8-9V6l-8-3Z"/><path d="m8 12 3 3 5-6"/>',

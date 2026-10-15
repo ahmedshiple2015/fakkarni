@@ -146,7 +146,7 @@ function locked() {
     const button = document.createElement("button");
     button.id = "hello-unlock";
     button.className = "primary wide hello-unlock";
-    button.innerHTML = `${icon("fingerprint")}<span>Unlock with PIN</span>${icon("arrow")}`;
+    button.innerHTML = `${icon("windows")}<span>Unlock with PIN</span>${icon("arrow")}`;
     button.disabled = !native || !hello.available;
     unlockForm.before(button);
     const fallback = document.createElement("p");
