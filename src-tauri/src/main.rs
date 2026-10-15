@@ -1,5 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod hello;
+mod lifecycle;
+
 use fakkarni_vault::{EntryInput, EntrySummary, Status, Vault};
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
@@ -303,8 +306,18 @@ fn browser_suggestions(
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            if !args.iter().any(|arg| arg == "--autostart") {
+                lifecycle::show_main(app);
+            }
+        }))
         .setup(|app| {
-            let path = app.path().app_local_data_dir()?.join("vault.kdbx");
+            let data_dir = app.path().app_local_data_dir()?;
+            let path = data_dir.join("vault.kdbx");
+            app.manage(hello::HelloState::new(
+                data_dir.join("windows-hello.json"),
+                path.clone(),
+            ));
             let vault = Arc::new(SharedState {
                 inner: Mutex::new(GuardedVault {
                     vault: Vault::new(path),
@@ -347,6 +360,7 @@ fn main() {
                     }
                 }
             });
+            lifecycle::init(app)?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -359,7 +373,13 @@ fn main() {
             edit_entry,
             reveal_password,
             save_entry,
-            generate_password
+            generate_password,
+            hello::hello_status,
+            hello::enable_hello,
+            hello::unlock_hello,
+            hello::disable_hello,
+            lifecycle::get_app_settings,
+            lifecycle::set_app_settings
         ])
         .run(tauri::generate_context!())
         .expect("Couldn't start Fakkarni");

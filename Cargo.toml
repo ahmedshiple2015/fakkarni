@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/vault-core", "crates/browser-bridge", "crates/native-host", "src-tauri"]
+members = ["crates/vault-core", "crates/browser-bridge", "crates/native-host", "crates/windows-hello", "crates/hello-enrollment", "src-tauri"]
 default-members = ["crates/vault-core"]
 resolver = "2"
 

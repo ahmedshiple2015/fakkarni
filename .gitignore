@@ -8,6 +8,7 @@
 *.kdbx.*
 *.keyx
 *.key
+windows-hello.json
 .env
 .env.*
 *.log

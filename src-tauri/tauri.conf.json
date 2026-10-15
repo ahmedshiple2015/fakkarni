@@ -10,7 +10,7 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [{ "label": "main", "title": "Fakkarni · فكرني", "width": 1180, "height": 780, "minWidth": 860, "minHeight": 620 }],
+    "windows": [{ "label": "main", "title": "Fakkarni · فكرني", "visible": false, "width": 1180, "height": 780, "minWidth": 860, "minHeight": 620 }],
     "security": {
       "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'",
       "capabilities": ["main"]

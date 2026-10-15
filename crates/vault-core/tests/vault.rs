@@ -2,6 +2,36 @@ use fakkarni_vault::{generate_password, EntryInput, Vault, VaultError};
 use std::fs;
 
 const MASTER: &str = "synthetic test master password";
+
+#[test]
+fn hello_reauthentication_keeps_session_and_stable_identity() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("vault.kdbx");
+    let mut vault = Vault::new(path.clone());
+    vault.create(MASTER).unwrap();
+    let identity = vault.identity().unwrap();
+    assert!(matches!(
+        vault.verify_password("wrong synthetic password"),
+        Err(VaultError::Unlock)
+    ));
+    assert!(vault.status().unlocked);
+    vault.verify_password(MASTER).unwrap();
+    vault.save_entry(&login()).unwrap();
+    assert_eq!(vault.identity().unwrap(), identity);
+    vault.lock();
+    assert!(matches!(vault.identity(), Err(VaultError::Locked)));
+    assert!(matches!(
+        vault.verify_password(MASTER),
+        Err(VaultError::Locked)
+    ));
+    vault.unlock(MASTER).unwrap();
+    assert_eq!(vault.identity().unwrap(), identity);
+    fs::write(&path, b"external synthetic replacement").unwrap();
+    assert!(matches!(
+        vault.verify_password(MASTER),
+        Err(VaultError::Changed)
+    ));
+}
 fn login() -> EntryInput {
     EntryInput {
         id: None,
