@@ -2,8 +2,10 @@
 //!
 //! Passport KSP's mandatory-gesture and implementation-type properties are
 //! provider-specific. Unsupported properties fail closed. RSA-OAEP SHA-256 is
-//! required. Only the public key is exported for BCrypt encryption; private
-//! operations remain in Passport, with no padding or private-provider fallback.
+//! not available on every Passport provider. Enrollment v2 deliberately uses
+//! RSAES-PKCS1-v1_5 for a random AES key, with AES-GCM authenticating the secret.
+//! Only the public key is exported for BCrypt encryption; private operations
+//! remain in Passport, with no automatic padding or private-provider fallback.
 
 use zeroize::Zeroizing;
 
@@ -74,15 +76,9 @@ mod platform {
 
     type Handle = usize;
     const SILENT: u32 = 0x40;
-    const OAEP: u32 = 4;
+    const PKCS1: u32 = 2;
     const CACHE_PROPERTY: &str = "NgcCacheType";
     const LEGACY_CACHE_PROPERTY: &str = "NgcCacheTypeProperty";
-    #[repr(C)]
-    struct OaepInfo {
-        algorithm: *const u16,
-        label: *const u8,
-        label_len: u32,
-    }
     #[link(name = "ncrypt")]
     unsafe extern "system" {
         fn NCryptOpenStorageProvider(out: *mut Handle, name: *const u16, flags: u32) -> i32;
@@ -131,7 +127,7 @@ mod platform {
             key: Handle,
             input: *const u8,
             len: u32,
-            padding: *const OaepInfo,
+            padding: *const c_void,
             output: *mut u8,
             cap: u32,
             written: *mut u32,
@@ -163,7 +159,7 @@ mod platform {
             key: Handle,
             input: *const u8,
             len: u32,
-            padding: *const OaepInfo,
+            padding: *const c_void,
             iv: *mut u8,
             iv_len: u32,
             output: *mut u8,
@@ -499,12 +495,6 @@ mod platform {
         };
         let public = PublicKey(handle);
         status(code, "public key import")?;
-        let sha = wide("SHA256");
-        let info = OaepInfo {
-            algorithm: sha.as_ptr(),
-            label: null(),
-            label_len: 0,
-        };
         let mut result = vec![0; RSA_BYTES];
         let mut written = 0;
         status(
@@ -513,13 +503,13 @@ mod platform {
                     public.0,
                     plaintext.as_ptr(),
                     plaintext.len() as u32,
-                    &info,
+                    null(),
                     null_mut(),
                     0,
                     result.as_mut_ptr(),
                     RSA_BYTES as u32,
                     &mut written,
-                    OAEP,
+                    PKCS1,
                 )
             },
             "key wrapping",
@@ -533,12 +523,6 @@ mod platform {
         let (_provider, key) = existing(name)?;
         ui(&key, hwnd)?;
         set_number(&key, "PinCacheIsGestureRequired", 1)?;
-        let sha = wide("SHA256");
-        let info = OaepInfo {
-            algorithm: sha.as_ptr(),
-            label: null(),
-            label_len: 0,
-        };
         let mut result = Zeroizing::new(vec![0; RSA_BYTES]);
         let mut written = 0;
         let code = unsafe {
@@ -546,15 +530,15 @@ mod platform {
                 key.0,
                 ciphertext.as_ptr(),
                 ciphertext.len() as u32,
-                &info,
+                null(),
                 result.as_mut_ptr(),
                 RSA_BYTES as u32,
                 &mut written,
-                OAEP,
+                PKCS1,
             )
         };
         if matches!(code as u32, 0x80090027 | 0x80090029) {
-            return Err(format!("This Windows Hello provider does not support the required RSA-OAEP SHA-256 unlock (0x{:08X}). Use your master password.", code as u32));
+            return Err(format!("This Windows Hello provider does not support the required Windows Hello key unlock (0x{:08X}). Use your master password.", code as u32));
         }
         status(code, "unlock")?;
         if written as usize != WRAPPING_KEY_BYTES {
@@ -573,7 +557,7 @@ mod platform {
         let mut h = 0;
         let code = unsafe { NCryptOpenKey(provider.0, &mut h, wide(name).as_ptr(), 0, SILENT) };
         let mut key = Owned(h);
-        if matches!(code as u32, 0x8009000d | 0x80090011 | 0x80090016) {
+        if matches!(code as u32, 0x8009000d | 0x80090016) {
             return Ok(());
         }
         status(code, "key access")?;
@@ -587,7 +571,7 @@ mod platform {
         use super::*;
 
         #[test]
-        fn public_bcrypt_oaep_interoperates_with_private_ncrypt_decrypt() {
+        fn public_bcrypt_pkcs1_interoperates_with_private_ncrypt_decrypt() {
             // Ephemeral software RSA key exercises the public wrapping path
             // without a Hello prompt, TPM, persisted key, or production fallback.
             let mut handle = 0;
@@ -648,12 +632,6 @@ mod platform {
             let ciphertext = encrypt_public(blob, &plaintext).unwrap();
             assert_eq!(ciphertext.len(), RSA_BYTES);
             assert_ne!(ciphertext, encrypt_public(blob, &plaintext).unwrap());
-            let sha = wide("SHA256");
-            let info = OaepInfo {
-                algorithm: sha.as_ptr(),
-                label: null(),
-                label_len: 0,
-            };
             let mut recovered = Zeroizing::new(vec![0u8; RSA_BYTES]);
             let mut written = 0;
             status(
@@ -662,11 +640,11 @@ mod platform {
                         key.0,
                         ciphertext.as_ptr(),
                         ciphertext.len() as u32,
-                        &info,
+                        null(),
                         recovered.as_mut_ptr(),
                         recovered.len() as u32,
                         &mut written,
-                        OAEP | SILENT,
+                        PKCS1 | SILENT,
                     )
                 },
                 "test decryption",

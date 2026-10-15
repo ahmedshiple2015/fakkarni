@@ -13,6 +13,8 @@ use std::{
 use zeroize::Zeroizing;
 
 const MAX_FILE: u64 = 16 * 1024;
+const VERSION: u8 = 2;
+const SCHEME: &str = "RSAES-PKCS1-v1_5+A256GCM";
 const ERROR: &str =
     "Windows Hello enrollment is unavailable or invalid. Unlock with your master password.";
 
@@ -20,6 +22,7 @@ const ERROR: &str =
 #[serde(deny_unknown_fields)]
 struct Envelope {
     version: u8,
+    scheme: String,
     key_name: String,
     vault_id: String,
     wrapped_key: Vec<u8>,
@@ -30,7 +33,8 @@ struct Envelope {
 impl Envelope {
     fn validate(&self) -> Result<(), String> {
         let id = uuid::Uuid::parse_str(&self.vault_id).map_err(|_| ERROR)?;
-        if self.version != 1
+        if self.version != VERSION
+            || self.scheme != SCHEME
             || id.hyphenated().to_string() != self.vault_id
             || !valid_key_name(&self.key_name)
             || self.wrapped_key.len() != 256
@@ -129,17 +133,22 @@ impl Manager {
     pub fn enabled(&self) -> Result<bool, String> {
         Ok(self.read()?.is_some())
     }
-    fn aad(&self, vault_id: &str) -> Vec<u8> {
-        // Length-delimited fields prevent ambiguous bindings; file contents may change on every save.
+    fn aad(&self, envelope: &Envelope) -> Vec<u8> {
+        // Authenticate every algorithm/binding field. Re-enrollment, not an
+        // automatic padding fallback, is required when the scheme changes.
         let path = self.vault_path.to_string_lossy();
-        format!(
-            "Fakkarni.Hello.Enrollment.v1\0{}:{}{}:{}",
-            vault_id.len(),
-            vault_id,
-            path.len(),
-            path
-        )
-        .into_bytes()
+        let mut result = b"Fakkarni.Hello.Enrollment\0".to_vec();
+        result.push(envelope.version);
+        for field in [
+            envelope.scheme.as_str(),
+            envelope.vault_id.as_str(),
+            path.as_ref(),
+            envelope.key_name.as_str(),
+        ] {
+            result.extend_from_slice(&(field.len() as u64).to_le_bytes());
+            result.extend_from_slice(field.as_bytes());
+        }
+        result
     }
     pub fn enroll(&self, password: &str, vault_id: &str, hwnd: isize) -> Result<(), String> {
         self.enroll_with(password, vault_id, hwnd, &WindowsHello)
@@ -174,7 +183,8 @@ impl Manager {
         let old = self.read()?;
         let name = protector.name()?;
         let mut envelope = Envelope {
-            version: 1,
+            version: VERSION,
+            scheme: SCHEME.into(),
             key_name: name.clone(),
             vault_id: vault_id.into(),
             wrapped_key: vec![0; 256],
@@ -201,7 +211,7 @@ impl Manager {
                     Nonce::from_slice(&envelope.nonce),
                     Payload {
                         msg: password.as_bytes(),
-                        aad: &self.aad(vault_id),
+                        aad: &self.aad(&envelope),
                     },
                 )
                 .map_err(|_| ERROR)?;
@@ -236,7 +246,7 @@ impl Manager {
                     Nonce::from_slice(&envelope.nonce),
                     Payload {
                         msg: &envelope.ciphertext,
-                        aad: &self.aad(&envelope.vault_id),
+                        aad: &self.aad(&envelope),
                     },
                 )
                 .map_err(|_| ERROR)?,
@@ -356,6 +366,34 @@ mod tests {
         assert!(m.unlock_with(0, &p).is_err());
         p.key.borrow_mut().fill(0);
         assert!(m.unlock_with(0, &p).is_err());
+    }
+    #[test]
+    fn v2_requires_explicit_scheme_and_authenticates_key_name() {
+        let (_dir, m, p) = setup();
+        m.enroll_with("synthetic versioned secret", ID, 0, &p)
+            .unwrap();
+        let original = std::fs::read(&m.enrollment_path).unwrap();
+        let mut env = m.read().unwrap().unwrap();
+        assert_eq!(env.version, 2);
+        assert_eq!(env.scheme, SCHEME);
+        env.version = 1;
+        std::fs::write(&m.enrollment_path, serde_json::to_vec(&env).unwrap()).unwrap();
+        assert!(m.unlock_with(0, &p).is_err());
+        env.version = VERSION;
+        env.scheme = "RSA-OAEP-SHA256+A256GCM".into();
+        std::fs::write(&m.enrollment_path, serde_json::to_vec(&env).unwrap()).unwrap();
+        assert!(m.unlock_with(0, &p).is_err());
+        env.scheme = SCHEME.into();
+        // Mock protector intentionally returns the same AES key for any key name;
+        // AES-GCM must independently reject changing this authenticated field.
+        env.key_name = "S-1-5-21//Fakkarni//00000000-0000-0000-0000-000000000099".into();
+        std::fs::write(&m.enrollment_path, serde_json::to_vec(&env).unwrap()).unwrap();
+        assert!(m.unlock_with(0, &p).is_err());
+        std::fs::write(&m.enrollment_path, original).unwrap();
+        assert_eq!(
+            &*m.unlock_with(0, &p).unwrap().password,
+            "synthetic versioned secret"
+        );
     }
     #[test]
     fn cancellation_keeps_old_enrollment_and_cleans_new_key() {
