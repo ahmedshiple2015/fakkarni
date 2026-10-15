@@ -13,8 +13,10 @@ A local-only, open-source desktop password manager for Windows. It runs as a nor
 - Encrypted temporary writes, atomic replacement, cooperating-instance locking, and external-change detection.
 - Restricted file profile checked before key derivation. General-purpose KDBX import is not supported yet.
 - Brave extension preview for matching account names/usernames, connected through a local Windows pipe and Native Messaging.
+- Optional Windows Hello quick unlock, keeping the master password as recovery fallback; requires compatible TPM-backed Windows Hello protection.
+- System tray with Open, Lock vault, and Quit; optional startup with Windows and opening in the tray.
 
-The extension currently shows suggestions only. Automatic saving/filling, password import UI, backup/restore UI, Windows Hello unlock, and native-app detection are still pending. See [Brave setup and privacy boundaries](docs/BRAVE.md).
+The extension currently shows suggestions only. Automatic saving/filling, password import UI, backup/restore UI, and native-app detection are still pending. See [Brave setup](docs/BRAVE.md) and [Windows Hello and desktop preferences](docs/DESKTOP.md).
 
 ## Run locally
 

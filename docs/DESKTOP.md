@@ -1,0 +1,38 @@
+# Windows Hello and desktop preferences
+
+Fakkarni remains a normal Windows desktop application. These features are configured inside the unlocked vault. Startup and Hello enrollment are off until the user explicitly enables them.
+
+## Windows Hello
+
+1. Create or unlock the vault using the master password.
+2. Choose **Enable Windows Hello** and reenter that master password.
+3. Complete Windows' own PIN, fingerprint, or face verification prompt.
+4. Subsequent locked sessions show **Unlock with Windows Hello**, with master-password fallback always available.
+
+Fakkarni never asks for, receives, or stores the Windows PIN or biometric data. The existing master password and KDBX encryption are unchanged. Keep the master password for recovery, a different PC, Windows/TPM reset, invalidated keys, and unsupported configurations. Hello enrollment persists across application restarts but is bound to this Windows user, device key, vault identity, and application vault path. Moving the vault or reinstalling/resetting Windows can require reenrollment.
+
+Use **Disable Windows Hello** inside the unlocked vault to remove enrollment metadata and request deletion of this enrollment's OS key. If Windows key cleanup fails, the app reports that failure; the local enrollment file is still removed. Master-password access continues to work.
+
+### Protection and compatibility
+
+The enrollment stores only encrypted data in `windows-hello.json` beside the vault in local application data. A random AES-256-GCM key encrypts the master credential with authenticated vault/path binding. An RSA-OAEP-SHA-256 key in the Microsoft Passport Key Storage Provider wraps that symmetric key. Decryption requires a non-exportable TPM-backed key with mandatory fresh user verification. Secrets remain in the native Rust code and are cleared where supported; neither the browser extension nor the frontend receives the recovered master credential.
+
+The implementation checks the expected current-user enrollment name, key size, permitted usage, export policy, hardware implementation, and mandatory-gesture policy. Unsupported properties, software keys, unsupported RSA padding, cancellation, and key errors fail closed. There is no DPAPI-only or cosmetic verification fallback.
+
+`NgcCacheType`, `NgcKeyImplType`, and `PinCacheIsGestureRequired` are provider-specific properties without a complete public Microsoft compatibility contract. Their support must be verified on target Windows builds. Automated tests cover mock encryption, tampering, wrong keys, metadata bounds, failed writes, identity binding, and revoked requests; they do not prove that a real device presents a fresh Hello prompt. Manual hardware verification remains required before treating this feature as production-ready.
+
+Enrollment reauthenticates against the current encrypted vault before any key is created. Lock/suspend/quit events revoke pending work, and a completed Hello prompt cannot unlock after its request was revoked. The optional enrollment does not change Brave's metadata-only protocol or add a password-disclosure operation.
+
+References: [NCryptDecrypt](https://learn.microsoft.com/en-us/windows/win32/api/ncrypt/nf-ncrypt-ncryptdecrypt), [Passport KSP and Windows Hello architecture](https://learn.microsoft.com/en-us/windows/security/identity-protection/hello-for-business/rdp-sign-in), [CNG key properties](https://learn.microsoft.com/en-us/windows/win32/seccng/key-storage-property-identifiers), and [KeePassWinHello's independently implemented integration](https://github.com/sirAndros/KeePassWinHello/blob/master/src/AuthProviders/WinHelloProvider.cs).
+
+## Tray and startup
+
+- **Start with Windows:** opt-in registration for the current Windows user only. The executable's full path is quoted and registered with `--autostart`. No administrator privileges or system-wide entry are used.
+- **Keep running in system tray when I close the window:** enabled by default. Clicking X hides the window while Brave can continue making queries. Existing five-minute inactivity locking and Windows lock/suspend locking continue to apply.
+- **Open in system tray:** off by default. When enabled, both normal launches and Windows startup begin with the window hidden and a tray icon available.
+- **Tray menu:** Open Fakkarni, Lock vault, Quit. Left-clicking the icon opens the window. Quit locks and exits the app completely.
+- **Opening a second copy:** restores the existing window instead of starting another vault process. A duplicate automatic-start launch does not force the existing window into the foreground.
+
+Startup never unlocks the vault automatically. Brave suggestions require the app to be running and the vault to be unlocked. Use Hello or the master password after each application start.
+
+Settings are bounded JSON written atomically in local application data. A failed settings save attempts to restore the exact previous startup registration. Tests use a fake registry and never enable actual startup. This prototype has no installer: enabling startup points to the current executable, so keep that executable in place until an installer provides a stable installation path.
