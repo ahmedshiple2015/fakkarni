@@ -29,6 +29,7 @@ let backupBusy = false;
 let view: "vault" | "settings" = "vault";
 type RestorePreview = { token: string; entryCount: number; fileName: string; hasExistingVault: boolean };
 type RestoreReport = { entryCount: number; recoveryPath: string | null; warnings: string[] };
+type MasterPasswordReport = { recoveryPath: string; warnings: string[] };
 const app = document.querySelector<HTMLDivElement>("#app")!;
 const native = isTauri();
 let status: Status = {
@@ -286,6 +287,7 @@ function vault() {
     if (!hello.enabled) { helloSetup(); return; }
     void disableHello();
   });
+  masterPasswordSettings();
   desktopSettings();
   browserPreferences();
   backupPreferences();
@@ -494,6 +496,80 @@ function desktopSettings() {
       }
     });
   });
+}
+function masterPasswordSettings() {
+  const section = document.createElement("section");
+  section.className = "master-password-settings";
+  section.setAttribute("aria-label", "Master password settings");
+  section.innerHTML = `<div class="setting-row"><div class="setting-copy"><h3>Master password</h3><p>Change the password that protects this vault.</p></div><button type="button" class="secondary" id="change-master-password" ${native ? "" : "disabled"}>Change master password</button></div>`;
+  document.querySelector("#security-settings")!.append(section);
+  section.querySelector("button")!.addEventListener("click", changeMasterPassword);
+}
+function changeMasterPassword() {
+  if (!native || !status.unlocked || document.querySelector("dialog")) return;
+  const origin = document.activeElement as HTMLElement | null;
+  const dialog = document.createElement("dialog");
+  dialog.className = "master-password-dialog";
+  dialog.setAttribute("aria-labelledby", "master-change-title");
+  dialog.setAttribute("aria-describedby", "master-change-warning");
+  dialog.innerHTML = `<form><div class="modal-heading"><h2 id="master-change-title">Change master password</h2><button type="button" class="icon-button" id="master-change-close" aria-label="Close">${icon("close")}</button></div><p class="hint" id="master-change-warning">After changing, the vault locks and PIN must be set up again. Existing backups keep their original password. An encrypted copy of this vault is saved before replacement.</p><div class="auth-field"><label for="master-change-current">Current master password</label>${passwordControl("master-change-current", 'required autocomplete="current-password"', "current master password")}</div><div class="auth-field"><label for="master-change-new">New master password</label>${passwordControl("master-change-new", 'required minlength="12" maxlength="1024" autocomplete="new-password" aria-describedby="master-change-length"', "new master password")}<p class="hint" id="master-change-length">At least 12 characters; up to 1,024 bytes.</p></div><div class="auth-field"><label for="master-change-confirm">Confirm new master password</label>${passwordControl("master-change-confirm", 'required maxlength="1024" autocomplete="new-password"', "new master password confirmation")}</div><p id="master-change-status" role="status" aria-live="polite"></p><div class="modal-actions"><button type="button" class="secondary" id="master-change-cancel">Cancel</button><button type="submit" class="primary">Change password</button></div></form>`;
+  app.append(dialog);
+  const form = dialog.querySelector<HTMLFormElement>("form")!;
+  const currentField = form.querySelector<HTMLInputElement>("#master-change-current")!;
+  const newField = form.querySelector<HTMLInputElement>("#master-change-new")!;
+  const confirmField = form.querySelector<HTMLInputElement>("#master-change-confirm")!;
+  const feedback = form.querySelector<HTMLElement>("#master-change-status")!;
+  let changing = false;
+  const close = () => {
+    if (changing) return;
+    form.reset();
+    dialog.remove();
+    if (origin?.isConnected) origin.focus();
+  };
+  form.querySelector("#master-change-close")!.addEventListener("click", close);
+  form.querySelector("#master-change-cancel")!.addEventListener("click", close);
+  dialog.addEventListener("cancel", event => { event.preventDefault(); close(); });
+  attachPasswordControls(form);
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
+    if (changing) return;
+    const currentPassword = currentField.value;
+    const newPassword = newField.value;
+    if (!currentPassword) { feedback.textContent = "Enter your current master password."; currentField.focus(); return; }
+    if (Array.from(newPassword).length < 12 || new TextEncoder().encode(newPassword).length > 1024) {
+      feedback.textContent = "Use at least 12 characters and no more than 1,024 bytes for the new password.";
+      newField.focus();
+      return;
+    }
+    if (newPassword !== confirmField.value) { feedback.textContent = "The new passwords do not match."; confirmField.focus(); return; }
+    if (newPassword === currentPassword) { feedback.textContent = "Choose a new password that differs from your current password."; newField.focus(); return; }
+    const generation = epoch;
+    changing = true;
+    form.reset();
+    form.querySelectorAll<HTMLInputElement>("input").forEach(field => { field.value = ""; field.type = "password"; });
+    form.querySelectorAll<HTMLButtonElement>("[data-password-toggle]").forEach(button => {
+      button.setAttribute("aria-pressed", "false");
+      button.setAttribute("aria-label", `Show ${button.dataset.passwordLabel}`);
+    });
+    form.querySelectorAll<HTMLInputElement | HTMLButtonElement>("input,button").forEach(control => { control.disabled = true; });
+    feedback.textContent = "Saving an encrypted recovery copy and changing the master password…";
+    try {
+      const report = await invoke<MasterPasswordReport>("change_master_password", { currentPassword, newPassword });
+      // The backend may emit vault-locked before returning its committed result.
+      // Always report the completed change even when that event advanced epoch.
+      clearSecrets();
+      await refresh();
+      message(`Master password changed. Unlock with your new password. Previous encrypted vault: ${report.recoveryPath}${report.warnings.length ? ` ${report.warnings.join(" ")}` : ""}`);
+    } catch (error) {
+      if (generation === epoch && dialog.isConnected) {
+        feedback.textContent = String(error);
+        form.querySelectorAll<HTMLInputElement | HTMLButtonElement>("input,button").forEach(control => { control.disabled = false; });
+        currentField.focus();
+      } else message(String(error));
+    } finally { changing = false; }
+  });
+  dialog.showModal();
+  currentField.focus();
 }
 async function disableHello() {
   const generation = epoch;

@@ -1,6 +1,7 @@
 //! Local vault operations. No network, clipboard, or browser access.
 use fs2::FileExt;
 mod backup;
+mod credentials;
 mod matching;
 mod preflight;
 pub use backup::{PreparedRestore, RestoreReport};

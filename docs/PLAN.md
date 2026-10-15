@@ -1,5 +1,9 @@
 # Implementation plan
 
+The current phase order and user acceptance gates are tracked in
+[PHASED-ROADMAP.md](PHASED-ROADMAP.md). That roadmap takes precedence over
+the original milestone order below.
+
 ## Architecture
 
 1. Rust core owns vault operations, unlocking, locking, and sensitive state.

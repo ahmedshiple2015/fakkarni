@@ -2,6 +2,7 @@
 
 mod backup;
 mod browser;
+mod credentials;
 mod hello;
 mod lifecycle;
 
@@ -327,6 +328,7 @@ fn main() {
             let data_dir = app.path().app_local_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
             let backup_state = Arc::new(backup::BackupState::new(data_dir.clone()));
+            app.manage(credentials::CredentialsState::new(data_dir.clone()));
             app.manage(backup_state.clone());
             let path = data_dir.join("vault.kdbx");
             app.manage(hello::HelloState::new(
@@ -422,7 +424,8 @@ fn main() {
             backup::create_backup,
             backup::prepare_restore,
             backup::cancel_restore,
-            backup::commit_restore
+            backup::commit_restore,
+            credentials::change_master_password
         ])
         .run(tauri::generate_context!())
         .expect("Couldn't start Fakkarni");

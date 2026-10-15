@@ -15,6 +15,9 @@ pub(super) struct HelloState {
 }
 
 impl HelloState {
+    pub(super) fn credential_gate(&self) -> Arc<Mutex<()>> {
+        self.gate.clone()
+    }
     pub(super) fn new(enrollment_path: PathBuf, vault_path: PathBuf) -> Self {
         Self {
             gate: Arc::new(Mutex::new(())),

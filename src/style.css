@@ -299,3 +299,15 @@ label.setting-toggle, .desktop-toggles label.setting-toggle { display: flex; ali
 .welcome .wide { position: relative; padding-left: 44px; padding-right: 44px; }
 .welcome .wide > svg:last-child { position: absolute; right: 16px; margin: 0; }
 .welcome .wide > svg:first-child:not(:last-child) { position: absolute; left: 16px; margin: 0; }
+
+.settings-group > .master-password-settings { padding: 0 20px; border-top: 1px solid var(--color-border); }
+.settings-group .master-password-settings + .desktop-settings { margin: 0 20px; padding: 0; border-top: 1px solid var(--color-border); }
+.master-password-dialog { width: 520px; }
+.master-password-dialog .modal-heading h2 { font-size: 22px; }
+.master-password-dialog .modal-heading .icon-button { flex: none; }
+.master-password-dialog .auth-field { margin-top: 18px; }
+.master-password-dialog .auth-field label { margin: 0 0 8px; font-size: 13px; }
+.master-password-dialog .hint { font-size: 12px; }
+.master-password-dialog #master-change-warning { padding: 12px 14px; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-panel); }
+.master-password-dialog #master-change-status { color: var(--color-danger); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+@media (max-width: 580px) { .settings-group > .master-password-settings { padding: 0 16px; } .settings-group .master-password-settings + .desktop-settings { margin: 0 16px; } }
