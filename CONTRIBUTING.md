@@ -13,7 +13,7 @@ npm ci
 npm run desktop
 ```
 
-If npm is available only in the workspace bootstrap tools, use `powershell -NoProfile -File scripts/npm.ps1` in place of `npm`. The wrapper adds the standard per-user Cargo location to PATH for the desktop CLI.
+If npm is available only in the workspace bootstrap tools, use `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/npm.ps1` in place of `npm`. The wrapper adds the standard per-user Cargo location to PATH for the desktop CLI. This process-only flag runs the reviewed project script without changing the machine's execution policy.
 
 `npm run dev` is a nonfunctional browser design preview; its credential inputs are disabled. Use the native desktop application to exercise the vault.
 

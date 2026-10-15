@@ -1,6 +1,6 @@
 # فكرني · Fakkarni
 
-A local-only, open-source password manager for Windows. Brave integration is the next milestone.
+A local-only, open-source desktop password manager for Windows. It runs as a normal desktop program; the Microsoft Store is not required.
 
 **Status:** early desktop prototype, not a production release. Use synthetic credentials while storage, recovery, Windows integration, and interoperability are being validated. The KDBX writing library is experimental; see [the library decision](docs/LIBRARY-DECISION.md).
 
@@ -12,8 +12,9 @@ A local-only, open-source password manager for Windows. Brave integration is the
 - Five-minute inactivity locking and Windows session/power event handling.
 - Encrypted temporary writes, atomic replacement, cooperating-instance locking, and external-change detection.
 - Restricted file profile checked before key derivation. General-purpose KDBX import is not supported yet.
+- Brave extension preview for matching account names/usernames, connected through a local Windows pipe and Native Messaging.
 
-There is no browser extension, automatic saving/filling, password import UI, backup/restore UI, Windows Hello unlock, or native-app detection in this milestone.
+The extension currently shows suggestions only. Automatic saving/filling, password import UI, backup/restore UI, Windows Hello unlock, and native-app detection are still pending. See [Brave setup and privacy boundaries](docs/BRAVE.md).
 
 ## Run locally
 
@@ -24,7 +25,7 @@ npm ci
 npm run desktop
 ```
 
-For the workspace-local npm bootstrap, use `powershell -NoProfile -File scripts/npm.ps1 run desktop`.
+For the workspace-local npm bootstrap, use `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/npm.ps1 run desktop`.
 
 The native app stores `vault.kdbx` under the current user's local application data directory for `org.fakkarni.desktop`. It has no account or cloud connection. `npm run dev` opens a design preview with credential inputs disabled; it cannot store passwords.
 
