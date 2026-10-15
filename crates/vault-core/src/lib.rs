@@ -1,11 +1,13 @@
 //! Local vault operations. No network, clipboard, or browser access.
 use fs2::FileExt;
+mod matching;
 mod preflight;
 use keepass::{
     config::{CompressionConfig, DatabaseConfig, DatabaseVersion, KdfConfig},
     db::{fields, EntryId},
     Database, DatabaseKey,
 };
+pub use matching::validate_origin;
 use rand::{rngs::OsRng, Rng};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
