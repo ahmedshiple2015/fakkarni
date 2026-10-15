@@ -49,4 +49,8 @@ Interoperability, corrupted input handling, interrupted writes, locked-session r
 
 ## Current autofill implementation
 
-The local pipe is not trusted as proof of browser identity. Every password release requires a visible native desktop approval showing the exact HTTPS origin and selected account, an unlocked vault, and an expiring one-time request capability. Lock epoch and navigation/document identity are checked again before delivery and injection. See [browser setup and boundaries](BRAVE.md). The optional locked-account index intentionally exposes account metadata locally after explicit opt-in, while preserving password encryption.
+Selecting an account in the extension fills it immediately while unlocked. If locked, the desktop comes forward for master-password or Windows Hello unlock, then filling resumes without another approval. The protocol binds an expiring one-time request capability to the exact origin/account, checks lock epochs before release, and checks navigation/document identity before injection.
+
+The local pipe is not proof of browser identity. Removing desktop approval intentionally trusts programs running as the current Windows user: those programs can request a credential while unlocked, or queue a fill that completes after unlock. A random request ID protects consumption/replay but is not authentication of the requesting executable. This prototype does not claim protection from malicious programs under the current Windows account. See [browser setup and boundaries](BRAVE.md).
+
+The optional locked-account index exposes account metadata locally after explicit opt-in, while preserving password encryption.

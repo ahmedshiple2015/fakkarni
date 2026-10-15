@@ -23,7 +23,7 @@ The implementation checks the expected current-user enrollment name, key size, p
 
 `NgcCacheType`, `NgcKeyImplType`, and `PinCacheIsGestureRequired` are provider-specific properties without a complete public Microsoft compatibility contract. Their support must be verified on target Windows builds. Automated tests cover mock encryption, tampering, wrong keys, metadata bounds, failed writes, identity binding, and revoked requests; they do not prove that a real device presents a fresh Hello prompt. Manual hardware verification remains required before treating this feature as production-ready.
 
-Enrollment reauthenticates against the current encrypted vault before any key is created. Lock/suspend/quit events revoke pending work, and a completed Hello prompt cannot unlock after its request was revoked. Browser requests cannot submit ciphertext to Hello or trigger decryption directly. Browser credential delivery requires a separate, explicit desktop approval.
+Enrollment reauthenticates against the current encrypted vault before any key is created. Lock/suspend/quit events revoke pending work, and a completed Hello prompt cannot unlock after its request was revoked. Browser requests cannot submit ciphertext to Hello or trigger decryption directly. Browser credential delivery requires an unlocked vault and an account selection in the extension; selecting while locked opens the desktop unlock flow and fills afterwards.
 
 References: [NCryptDecrypt](https://learn.microsoft.com/en-us/windows/win32/api/ncrypt/nf-ncrypt-ncryptdecrypt), [Passport KSP and Windows Hello architecture](https://learn.microsoft.com/en-us/windows/security/identity-protection/hello-for-business/rdp-sign-in), [CNG key properties](https://learn.microsoft.com/en-us/windows/win32/seccng/key-storage-property-identifiers), and [KeePassWinHello's independently implemented integration](https://github.com/sirAndros/KeePassWinHello/blob/master/src/AuthProviders/WinHelloProvider.cs).
 
@@ -35,6 +35,8 @@ References: [NCryptDecrypt](https://learn.microsoft.com/en-us/windows/win32/api/
 - **Tray menu:** Open Fakkarni, Lock vault, Quit. Left-clicking the icon opens the window. Quit locks and exits the app completely.
 - **Opening a second copy:** restores the existing window instead of starting another vault process. A duplicate automatic-start launch does not force the existing window into the foreground.
 
-Startup never unlocks the vault automatically. The browser can start Fakkarni in the background. Password filling requires vault unlock and explicit approval. Account suggestions while locked require the separate local-index opt-in. Use Hello or the master password after each application start.
+Startup never unlocks the vault automatically. The browser can start Fakkarni in the background. Password filling requires vault unlock and an account selection in the extension. Account suggestions while locked require the separate local-index opt-in. Use Hello or the master password after each application start.
 
 Settings are bounded JSON written atomically in local application data. A failed settings save attempts to restore the exact previous startup registration. Tests use a fake registry and never enable actual startup. This prototype has no installer: enabling startup points to the current executable, so keep that executable in place until an installer provides a stable installation path.
+
+Private Hello operations open the Passport key with UI allowed, while public-key export remains silent. Opening the private key with NCRYPT_SILENT_FLAG causes NTE_SILENT_CONTEXT (0x80090022) when verification is needed; it must not be used for interactive unlock. TPM and fresh-gesture checks remain mandatory.
