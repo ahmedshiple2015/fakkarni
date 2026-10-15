@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod backup;
 mod browser;
 mod hello;
 mod lifecycle;
@@ -285,8 +286,12 @@ fn main() {
                 lifecycle::show_main(app);
             }
         }))
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let data_dir = app.path().app_local_data_dir()?;
+            std::fs::create_dir_all(&data_dir)?;
+            let backup_state = Arc::new(backup::BackupState::new(data_dir.clone()));
+            app.manage(backup_state.clone());
             let path = data_dir.join("vault.kdbx");
             app.manage(hello::HelloState::new(
                 data_dir.join("windows-hello.json"),
@@ -350,6 +355,7 @@ fn main() {
                         previously_unlocked = unlocked;
                     }
                     browser_state.complete_after_unlock(&vault);
+                    backup_state.expire();
                 }
             });
             lifecycle::init(app)?;
@@ -375,7 +381,11 @@ fn main() {
             browser::browser_settings,
             browser::set_browser_settings,
             lifecycle::get_app_settings,
-            lifecycle::set_app_settings
+            lifecycle::set_app_settings,
+            backup::create_backup,
+            backup::prepare_restore,
+            backup::cancel_restore,
+            backup::commit_restore
         ])
         .run(tauri::generate_context!())
         .expect("Couldn't start Fakkarni");

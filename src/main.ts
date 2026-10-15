@@ -22,6 +22,9 @@ let browserSettings: BrowserSettings = { showAccountsWhenLocked: false };
 let browserSettingsError: string | null = null;
 let pendingFill: BrowserFill | null = null;
 let pendingRead = false;
+let backupBusy = false;
+type RestorePreview = { token: string; entryCount: number; fileName: string; hasExistingVault: boolean };
+type RestoreReport = { entryCount: number; recoveryPath: string | null; warnings: string[] };
 const app = document.querySelector<HTMLDivElement>("#app")!;
 const native = isTauri();
 let status: Status = {
@@ -51,6 +54,7 @@ function message(text: string) {
 }
 function clearSecrets() {
   epoch++;
+  backupBusy = false;
   window.clearTimeout(hideTimer);
   document
     .querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("input,textarea")
@@ -104,6 +108,14 @@ function locked() {
     ? "You can enable Windows Hello after creating your vault. Keep your master password for recovery."
     : hello.reason || (hello.enabled ? "Windows handles your PIN, fingerprint, or face. Fakkarni never receives your Windows PIN." : "Enable Windows Hello from inside your vault for quicker unlocking.");
   unlockForm.after(helper);
+  if (native) {
+    const restore = document.createElement("button");
+    restore.className = "text-button";
+    restore.type = "button";
+    restore.textContent = "Import or restore an encrypted vault";
+    helper.after(restore);
+    restore.addEventListener("click", restoreBackup);
+  }
   if (native) {
     if (status.exists && hello.enabled && hello.available)
       document.querySelector<HTMLButtonElement>("#hello-unlock")?.focus();
@@ -207,6 +219,7 @@ function vault() {
   });
   desktopSettings();
   browserPreferences();
+  backupPreferences();
   renderBrowserFill();
   document.querySelector("#lock")!.addEventListener("click", async () => {
     clearSecrets();
@@ -278,6 +291,100 @@ function browserPreferences() {
       if (generation === epoch && section.isConnected) checkbox.disabled = false;
     }
   });
+}
+function backupPreferences() {
+  const section = document.createElement("section");
+  section.className = "desktop-settings";
+  section.setAttribute("aria-label", "Backup and PC transfer");
+  section.innerHTML = `<h3>Backup &amp; PC transfer</h3><p class="hint">Export a local encrypted copy for backup or to transfer to another PC. You need the master password used when the backup was made; Windows Hello alone cannot open it on another PC. Choose a folder outside cloud sync if you want it to stay on this device.</p><div class="fill-actions"><button class="secondary" id="create-backup">Export encrypted vault</button><button class="text-button" id="restore-backup">Import / restore vault</button></div><p class="hint">Restore validates the selected file before replacing your vault and preserves an encrypted recovery copy of the current file. Restore ends the current session and resets device unlock and the browser account index.</p><p id="backup-status" role="status"></p>`;
+  document.querySelector("footer")!.before(section);
+  section.querySelector("#restore-backup")!.addEventListener("click", restoreBackup);
+  section.querySelector<HTMLButtonElement>("#create-backup")!.addEventListener("click", async (event) => {
+    if (backupBusy || !native || !status.unlocked) return;
+    backupBusy = true;
+    const button = event.currentTarget as HTMLButtonElement;
+    button.disabled = true;
+    const feedback = section.querySelector("#backup-status")!;
+    feedback.textContent = "Choose a new backup filename. Existing files will not be overwritten.";
+    try {
+      const result = await invoke<{fileName: string; path: string} | null>("create_backup");
+      if (feedback.isConnected) feedback.textContent = result ? `Encrypted backup saved: ${result.path}` : "Backup cancelled.";
+    } catch (error) {
+      if (feedback.isConnected) feedback.textContent = String(error);
+    } finally {
+      backupBusy = false;
+      if (button.isConnected) button.disabled = false;
+    }
+  });
+}
+function restoreBackup() {
+  if (!native || backupBusy || document.querySelector("dialog")) return;
+  backupBusy = true;
+  let preview: RestorePreview | null = null;
+  let committing = false;
+  const dialog = document.createElement("dialog");
+  dialog.setAttribute("aria-label", "Import encrypted vault");
+  dialog.innerHTML = `<form><div class="modal-heading"><h2>Import encrypted vault</h2><button type="button" id="cancel-restore" class="text-button" aria-label="Close">✕</button></div><p class="hint">Enter the exported vault’s master password, then choose its .kdbx file. Validation and preview do not change your current vault.</p><label>Backup master password<input name="backupPassword" type="password" required maxlength="1024" autocomplete="off"></label><p id="restore-status" role="status"></p><button class="primary wide">Choose exported file and preview</button></form>`;
+  app.append(dialog);
+  const close = () => {
+    if (committing) return;
+    if (preview) void invoke("cancel_restore", {token: preview.token}).catch(() => {});
+    dialog.querySelector<HTMLFormElement>("form")?.reset();
+    dialog.remove();
+    backupBusy = false;
+  };
+  dialog.querySelector("#cancel-restore")!.addEventListener("click", close);
+  dialog.addEventListener("cancel", event => { event.preventDefault(); close(); });
+  const form = dialog.querySelector<HTMLFormElement>("form")!;
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
+    if (preview || committing) return;
+    const field = form.elements.namedItem("backupPassword") as HTMLInputElement;
+    const password = field.value;
+    field.value = "";
+    const button = form.querySelector<HTMLButtonElement>("button.primary")!;
+    button.disabled = true;
+    const feedback = form.querySelector("#restore-status")!;
+    feedback.textContent = "Choose the backup to validate…";
+    try {
+      const result = await invoke<RestorePreview | null>("prepare_restore", {password});
+      if (!dialog.isConnected) {
+        if (result) void invoke("cancel_restore", {token: result.token}).catch(() => {});
+        backupBusy = false;
+        return;
+      }
+      if (!result) { feedback.textContent = "File selection cancelled."; button.disabled = false; return; }
+      preview = result;
+      form.reset();
+      form.innerHTML = `<div class="modal-heading"><h2>Review import</h2></div><p><strong>${esc(result.fileName)}</strong></p><p>${result.entryCount} saved ${result.entryCount === 1 ? "login" : "logins"}</p><p class="hint">${result.hasExistingVault ? "This will replace the current vault. An encrypted recovery copy must be saved successfully before replacement." : "This will create the local vault from this backup."} The restored vault stays locked. Use the backup's master password to reopen it and set up Windows Hello again if wanted.</p><div class="desktop-toggles"><label><input type="checkbox" id="confirm-restore"><span>I understand that restoring replaces the current vault; it does not merge logins.</span></label></div><p id="restore-status" role="status"></p><div class="fill-actions"><button type="button" id="restore-back" class="secondary">Cancel</button><button type="button" id="commit-restore" class="primary" disabled>Import this vault</button></div>`;
+      form.querySelector("#restore-back")!.addEventListener("click", close);
+      const commit = form.querySelector<HTMLButtonElement>("#commit-restore")!;
+      form.querySelector<HTMLInputElement>("#confirm-restore")!.addEventListener("change", event => { commit.disabled = !(event.currentTarget as HTMLInputElement).checked; });
+      commit.addEventListener("click", async () => {
+        if (!preview || committing) return;
+        committing = true;
+        form.querySelectorAll<HTMLButtonElement | HTMLInputElement>("button,input").forEach(control => { control.disabled = true; });
+        form.querySelector("#restore-status")!.textContent = "Preserving the current encrypted vault and restoring…";
+        try {
+          const report = await invoke<RestoreReport>("commit_restore", {token: preview.token});
+          preview = null;
+          clearSecrets();
+          await refresh();
+          message(`Restored ${report.entryCount} logins. Unlock with the backup's master password.${report.recoveryPath ? ` Previous encrypted vault preserved at: ${report.recoveryPath}` : ""}${report.warnings.length ? ` ${report.warnings.join(" ")}` : ""}`);
+        } catch (error) {
+          if (dialog.isConnected) {
+            form.querySelector("#restore-status")!.textContent = `${String(error)} Close this preview and choose the backup again to retry.`;
+            form.querySelector<HTMLButtonElement>("#restore-back")!.disabled = false;
+          } else message(String(error));
+        } finally { committing = false; backupBusy = false; }
+      });
+    } catch (error) {
+      if (dialog.isConnected) { feedback.textContent = String(error); button.disabled = false; }
+      else backupBusy = false;
+    }
+  });
+  dialog.showModal();
+  dialog.querySelector<HTMLInputElement>("input")!.focus();
 }
 function desktopSettings() {
   const section = document.createElement("section");

@@ -87,6 +87,26 @@ impl BrowserState {
             }
         }
     }
+    /// A replacement vault must not inherit account metadata or pending fills.
+    pub fn reset_after_restore(&self) -> Result<(), String> {
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|_| "Browser index could not be reset.")?;
+        inner.pending = None;
+        inner.used_request_ids.clear();
+        inner.index = Index::default();
+        let bytes =
+            serde_json::to_vec(&inner.index).map_err(|_| "Browser index could not be reset.")?;
+        if self.persist(&bytes).is_err() {
+            match fs::remove_file(&self.path) {
+                Ok(()) => {},
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
+                Err(_) => return Err("The vault was restored, but the old browser index file could not be removed. Locked-account suggestions are disabled in this session; check local file permissions before restarting.".into()),
+            }
+        }
+        Ok(())
+    }
     /// The extension account click authorizes this exact pending request. Unlocking
     /// resumes it automatically; no additional desktop approval prompt is shown.
     pub fn complete_after_unlock(&self, vault: &SharedState) {
@@ -802,5 +822,77 @@ mod tests {
                 .settings
                 .show_accounts_when_locked
         );
+    }
+
+    #[test]
+    fn restore_reset_removes_ready_fills_replay_ids_and_persisted_account_index() {
+        let (dir, vault, state, id) = fixture();
+        let token = "0123456789abcdef0123456789abcdef";
+        state
+            .inner
+            .lock()
+            .unwrap()
+            .index
+            .settings
+            .show_accounts_when_locked = true;
+        state.refresh(&mut vault.inner.lock().unwrap().vault);
+        assert_eq!(begin(&vault, &state, &id, token).status, Status::Pending);
+        {
+            let inner = state.inner.lock().unwrap();
+            assert!(inner.pending.as_ref().unwrap().ready.is_some());
+            assert!(!inner.used_request_ids.is_empty());
+            assert_eq!(inner.index.entries.len(), 1);
+        }
+        state.reset_after_restore().unwrap();
+        {
+            let inner = state.inner.lock().unwrap();
+            assert!(inner.pending.is_none());
+            assert!(inner.used_request_ids.is_empty());
+            assert!(inner.index.entries.is_empty());
+            assert!(!inner.index.settings.show_accounts_when_locked);
+        }
+        assert!(poll(&vault, &state, "https://example.test", token)
+            .credential
+            .is_none());
+        let persisted = fs::read_to_string(dir.path().join("index.json")).unwrap();
+        assert!(!persisted.contains("synthetic-user"));
+        assert!(!persisted.contains(&id));
+        let reopened = BrowserState::new(dir.path().join("index.json"));
+        let reopened = reopened.inner.lock().unwrap();
+        assert!(reopened.index.entries.is_empty());
+        assert!(!reopened.index.settings.show_accounts_when_locked);
+        // Resetting browser metadata must never alter the vault's password.
+        assert_eq!(
+            vault.inner.lock().unwrap().vault.reveal(&id).unwrap(),
+            "synthetic-secret"
+        );
+    }
+
+    #[test]
+    fn restore_index_cleanup_failure_reports_warning_but_disables_in_memory_access() {
+        let (dir, vault, state, id) = fixture();
+        let token = "0123456789abcdef0123456789abcdef";
+        state
+            .inner
+            .lock()
+            .unwrap()
+            .index
+            .settings
+            .show_accounts_when_locked = true;
+        state.refresh(&mut vault.inner.lock().unwrap().vault);
+        assert_eq!(begin(&vault, &state, &id, token).status, Status::Pending);
+        // A directory in place of the index blocks both atomic file replacement
+        // and remove_file without altering production error-handling paths.
+        let index = dir.path().join("index.json");
+        fs::remove_file(&index).unwrap();
+        fs::create_dir(&index).unwrap();
+        let warning = state.reset_after_restore().unwrap_err();
+        assert!(warning.contains("vault was restored"));
+        assert!(warning.contains("could not be removed"));
+        let inner = state.inner.lock().unwrap();
+        assert!(inner.pending.is_none());
+        assert!(inner.used_request_ids.is_empty());
+        assert!(inner.index.entries.is_empty());
+        assert!(!inner.index.settings.show_accounts_when_locked);
     }
 }
