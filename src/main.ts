@@ -108,6 +108,8 @@ async function refresh() {
     vault();
   } catch (error) {
     if (generation === epoch) {
+      clearSecrets();
+      status.unlocked = false;
       locked();
       message(String(error));
     }
@@ -287,6 +289,9 @@ if (native) {
     clearSecrets();
     status.unlocked = false;
     locked();
+    // A creation may have reached disk before its response was revoked.
+    // Re-read metadata, including after Windows unlocks, without retaining secrets.
+    void refresh();
   });
   let lastTouch = 0;
   for (const event of ["pointerdown", "keydown"])
