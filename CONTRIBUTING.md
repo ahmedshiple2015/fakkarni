@@ -19,6 +19,7 @@ If npm is available only in the workspace bootstrap tools, use `powershell -NoPr
 
 ```powershell
 npm run build
+npm run test:desktop
 cargo fmt --all -- --check
 cargo test --workspace --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings

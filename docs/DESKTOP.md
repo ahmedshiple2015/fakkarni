@@ -40,3 +40,9 @@ Startup never unlocks the vault automatically. The browser can start Fakkarni in
 Settings are bounded JSON written atomically in local application data. A failed settings save attempts to restore the exact previous startup registration. Tests use a fake registry and never enable actual startup. This prototype has no installer: enabling startup points to the current executable, so keep that executable in place until an installer provides a stable installation path.
 
 Private Hello operations open the Passport key with UI allowed, while public-key export remains silent. Opening the private key with NCRYPT_SILENT_FLAG causes NTE_SILENT_CONTEXT (0x80090022) when verification is needed; it must not be used for interactive unlock. TPM and fresh-gesture checks remain mandatory.
+
+## Editing saved passwords
+
+Ordinary title, username, site, and notes edits preserve the existing protected password. The desktop editor receives no existing password and keeps replacement controls disabled until **Change password** is selected. New and replacement passwords require confirmation. The native save command defaults to preserving an existing password when no replacement flag is supplied, and the vault core skips the protected Password field entirely in that case. General WebView2 form autofill is disabled inside the desktop app.
+
+These safeguards address accidental editor overwrites; they do not establish the cause of an earlier report where the revealed password matched the username. Synthetic read/fill/save/reopen regression tests must continue to check that username and password stay distinct and read-only operations leave encrypted vault bytes unchanged. No existing user password is repaired or guessed automatically.
