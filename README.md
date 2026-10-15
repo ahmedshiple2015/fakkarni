@@ -1,8 +1,34 @@
 # فكرني · Fakkarni
 
-A planned open-source, local-only password manager for Windows, with Brave browser integration.
+A local-only, open-source password manager for Windows. Brave integration is the next milestone.
 
-**Status:** planning foundation. No working vault or browser extension exists yet. Do not store real credentials in development prototypes.
+**Status:** early desktop prototype, not a production release. Use synthetic credentials while storage, recovery, Windows integration, and interoperability are being validated. The KDBX writing library is experimental; see [the library decision](docs/LIBRARY-DECISION.md).
+
+## Implemented in the prototype
+
+- Rust vault core with encrypted KDBX 4.1 storage and Argon2id (64 MiB, three passes).
+- Create, unlock, lock, add/edit logins, and secure random password generation.
+- Dark Tauri desktop interface with local search and explicit, temporary password reveal.
+- Five-minute inactivity locking and Windows session/power event handling.
+- Encrypted temporary writes, atomic replacement, cooperating-instance locking, and external-change detection.
+- Restricted file profile checked before key derivation. General-purpose KDBX import is not supported yet.
+
+There is no browser extension, automatic saving/filling, password import UI, backup/restore UI, Windows Hello unlock, or native-app detection in this milestone.
+
+## Run locally
+
+Install Node.js 24 LTS, stable Rust (MSVC), Visual Studio C++ build tools with Windows SDK, and WebView2. Then:
+
+```powershell
+npm ci
+npm run desktop
+```
+
+For the workspace-local npm bootstrap, use `powershell -NoProfile -File scripts/npm.ps1 run desktop`.
+
+The native app stores `vault.kdbx` under the current user's local application data directory for `org.fakkarni.desktop`. It has no account or cloud connection. `npm run dev` opens a design preview with credential inputs disabled; it cannot store passwords.
+
+See [contributing and checks](CONTRIBUTING.md) for build and test instructions.
 
 ## Agreed first release
 
@@ -13,7 +39,7 @@ A planned open-source, local-only password manager for Windows, with Brave brows
 - Save/update prompts for browser logins and explicit click-to-fill.
 - Password import and encrypted local backup/restore.
 - Clean dark interface with Arabic and English naming.
-- GPL-3.0 license selected; include the standard license text before distribution.
+- GPL-3.0-only license, with the standard license text included.
 
 No cloud service, telemetry, remote assets, or automatic network update checks. Filling credentials intentionally gives them to the selected website or application during login.
 
