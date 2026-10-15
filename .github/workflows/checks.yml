@@ -17,6 +17,7 @@ jobs:
         run: rustup component add rustfmt clippy
       - run: npm ci
       - run: npm run build
+      - run: npm run test:desktop
       - run: npm run test:extension
       - run: cargo fmt --all -- --check
       - run: cargo test --workspace --locked
