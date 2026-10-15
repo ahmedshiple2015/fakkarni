@@ -15,8 +15,9 @@ A local-only, open-source desktop password manager for Windows. It runs as a nor
 - Brave and Edge extension with account suggestions and user-selected click-to-fill over a local Windows pipe and Native Messaging.
 - Optional Windows Hello quick unlock, keeping the master password as recovery fallback; requires compatible TPM-backed Windows Hello protection.
 - System tray with Open, Lock vault, and Quit; optional startup with Windows and opening in the tray.
+- Encrypted vault export, PC-to-PC import, validated restore previews, and preservation of the previous encrypted vault before replacement.
 
-The extension fills an explicitly selected login when the vault is unlocked, or automatically after unlocking. An optional unencrypted local account index shows names, usernames, and site origins while locked; passwords remain encrypted. Automatic saving, password import UI, backup/restore UI, and native-app detection are still pending. See [Brave setup](docs/BRAVE.md) and [Windows Hello and desktop preferences](docs/DESKTOP.md).
+The extension fills an explicitly selected login when the vault is unlocked, or automatically after unlocking. An optional unencrypted local account index shows names, usernames, and site origins while locked; passwords remain encrypted. Automatic saving, CSV/other-manager imports, and native-app detection are still pending. See [encrypted backup and PC transfer](docs/BACKUPS.md). See [Brave setup](docs/BRAVE.md) and [Windows Hello and desktop preferences](docs/DESKTOP.md).
 
 ## Run locally
 

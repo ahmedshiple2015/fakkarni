@@ -46,3 +46,7 @@ Private Hello operations open the Passport key with UI allowed, while public-key
 Ordinary title, username, site, and notes edits preserve the existing protected password. The desktop editor receives no existing password and keeps replacement controls disabled until **Change password** is selected. New and replacement passwords require confirmation. The native save command defaults to preserving an existing password when no replacement flag is supplied, and the vault core skips the protected Password field entirely in that case. General WebView2 form autofill is disabled inside the desktop app.
 
 These safeguards address accidental editor overwrites; they do not establish the cause of an earlier report where the revealed password matched the username. Synthetic read/fill/save/reopen regression tests must continue to check that username and password stay distinct and read-only operations leave encrypted vault bytes unchanged. No existing user password is repaired or guessed automatically.
+
+## Backup and PC transfer
+
+Use **Export encrypted vault** to create a portable `.kdbx` file and **Import / restore vault** to load it on this or another PC. A preview and explicit replacement confirmation come before any vault change. The current encrypted vault is preserved before replacement, and the restored vault requires unlocking with the export's master password. See [backup and transfer instructions](BACKUPS.md).
