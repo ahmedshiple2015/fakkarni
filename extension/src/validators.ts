@@ -6,7 +6,7 @@ export type Match = {
 };
 export type MatchResponse = {
   version: 1;
-  status: "ok" | "locked" | "unavailable" | "error";
+  status: "ok" | "locked" | "unavailable" | "error" | "pending" | "cancelled";
   matches: Match[];
 };
 
@@ -40,12 +40,12 @@ export function validateResponse(value: unknown): MatchResponse | null {
     !record(value) ||
     value.version !== 1 ||
     typeof value.status !== "string" ||
-    !["ok", "locked", "unavailable", "error"].includes(value.status) ||
+    !["ok", "locked", "unavailable", "error", "pending", "cancelled"].includes(value.status) ||
     !Array.isArray(value.matches) ||
     value.matches.length > 50
   )
     return null;
-  if (value.status !== "ok" && value.matches.length !== 0) return null;
+  if (!["ok", "locked"].includes(value.status) && value.matches.length !== 0) return null;
   const matches: Match[] = [];
   for (const entry of value.matches) {
     if (
@@ -70,4 +70,12 @@ export function validateResponse(value: unknown): MatchResponse | null {
     status: value.status as MatchResponse["status"],
     matches,
   };
+}
+
+/** Credentials are accepted only by the background's approved poll path. */
+export function validateCredential(value: unknown): { username: string; password: string } | null {
+  if (!record(value) || typeof value.username !== "string" || typeof value.password !== "string" ||
+      value.username.length > 4096 || value.password.length > 4096 || !value.password.length ||
+      value.username.includes("\0") || value.password.includes("\0")) return null;
+  return { username: value.username, password: value.password };
 }

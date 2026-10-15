@@ -32,6 +32,24 @@ fn stored_origin_matches(stored: &str, origin: &str) -> bool {
 }
 
 impl Vault {
+    /// Bounded metadata snapshot for the optional local locked-account index.
+    /// Background refresh never extends the user's idle unlock session.
+    pub fn browser_index(&mut self) -> Result<Vec<EntrySummary>> {
+        self.expire();
+        let session = self.session.as_ref().ok_or(VaultError::Locked)?;
+        Ok(session
+            .database
+            .iter_all_entries()
+            .take(512)
+            .map(|e| EntrySummary {
+                id: e.id().uuid().to_string(),
+                title: e.get(fields::TITLE).unwrap_or_default().into(),
+                username: e.get(fields::USERNAME).unwrap_or_default().into(),
+                url: e.get(fields::URL).unwrap_or_default().into(),
+            })
+            .collect())
+    }
+
     /// Metadata for one exact HTTPS origin; requests do not renew idle timeout.
     pub fn matches(&mut self, origin: &str) -> Result<Vec<EntrySummary>> {
         self.expire();
@@ -62,6 +80,17 @@ mod tests {
     use crate::{Database, DatabaseKey, Session, IDLE_TIMEOUT};
     use std::time::Instant;
 
+    #[test]
+    fn background_index_does_not_renew_unlock_session() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut vault = Vault::new(directory.path().join("index-test.kdbx"));
+        vault.create("Synthetic metadata test master").unwrap();
+        let activity = vault.session.as_ref().unwrap().last_activity;
+        assert!(vault.browser_index().unwrap().is_empty());
+        assert_eq!(vault.session.as_ref().unwrap().last_activity, activity);
+        vault.lock();
+        assert!(vault.browser_index().is_err());
+    }
     #[test]
     fn accepts_only_canonical_https_origins() {
         for origin in [

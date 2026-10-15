@@ -15,6 +15,12 @@ let hello: HelloStatus = { available: false, enabled: false, reason: "Windows He
 type AppSettings = { startWithWindows: boolean; closeToTray: boolean; startMinimized: boolean };
 let appSettings: AppSettings = { startWithWindows: false, closeToTray: true, startMinimized: false };
 let settingsError: string | null = null;
+type BrowserSettings = { showAccountsWhenLocked: boolean };
+type BrowserFill = { requestId: string; origin: string; title: string; username: string };
+let browserSettings: BrowserSettings = { showAccountsWhenLocked: false };
+let browserSettingsError: string | null = null;
+let pendingFill: BrowserFill | null = null;
+let pendingRead = false;
 const app = document.querySelector<HTMLDivElement>("#app")!;
 const native = isTauri();
 let status: Status = {
@@ -61,6 +67,7 @@ function locked() {
     `<div class="topbar"><span>Personal vault</span><span class="pill">${native ? "LOCAL VAULT" : "DESIGN PREVIEW"}</span></div><section class="welcome"><div class="large-shield">${shield}</div><div class="eyebrow">A LITTLE PEACE OF MIND</div><h1>${status.exists ? "Welcome back." : "Remember less.<br>Keep more safe."}</h1><p>${native ? (status.exists ? "Unlock your vault to pick up where you left off." : "One master password. A private home for all your logins.") : "This browser preview has no vault connection. Open the desktop app to create or unlock your encrypted vault."}</p><form id="unlock"><label>Master password<input id="master" type="password" minlength="${status.exists ? 1 : 12}" required autocomplete="${status.exists ? "current-password" : "new-password"}" ${native ? "" : "disabled"} placeholder="${status.exists ? "Enter your master password" : "At least 12 characters"}"></label>${!status.exists ? `<label>Confirm master password<input id="confirm" type="password" required autocomplete="new-password" ${native ? "" : "disabled"} placeholder="Repeat your master password"></label><small class="hint">Keep it somewhere safe. There is no password reset.</small>` : ""}<button class="primary wide" ${native ? "" : "disabled"}>${status.exists ? "Unlock vault" : "Create my vault"} <span>→</span></button><div id="message" role="status"></div></form><div class="privacy">${shield} Encrypted locally. Always under your control.</div></section>`,
   );
   const unlockForm = document.querySelector<HTMLFormElement>("#unlock")!;
+  renderBrowserFill();
   if (status.exists && hello.enabled) {
     const button = document.createElement("button");
     button.id = "hello-unlock";
@@ -117,6 +124,9 @@ function locked() {
         return;
       }
       const generation = epoch;
+      (document.querySelector("#master") as HTMLInputElement).value = "";
+      const confirmation = document.querySelector<HTMLInputElement>("#confirm");
+      if (confirmation) confirmation.value = "";
       const button =
         document.querySelector<HTMLButtonElement>("#unlock button")!;
       button.disabled = true;
@@ -139,7 +149,7 @@ function locked() {
 async function refresh() {
   const generation = epoch;
   try {
-    const [next, nextHello, nextSettings] = await Promise.all([
+    const [next, nextHello, nextSettings, nextBrowserSettings] = await Promise.all([
       invoke<Status>("vault_status"),
       invoke<HelloStatus>("hello_status").catch((error): HelloStatus => ({
         available: false, enabled: false, reason: `Windows Hello is unavailable: ${String(error)}`,
@@ -148,12 +158,20 @@ async function refresh() {
         (settings) => ({ settings, error: null }),
         (error) => ({ settings: appSettings, error: `Could not load desktop settings: ${String(error)}` }),
       ),
+      invoke<BrowserSettings>("browser_settings").then(
+        (settings) => ({ settings, error: null }),
+        (error) => ({ settings: browserSettings, error: `Browser preferences unavailable: ${String(error)}` }),
+      ),
     ]);
     if (generation !== epoch) return;
     status = next;
     hello = nextHello;
     appSettings = nextSettings.settings;
     settingsError = nextSettings.error;
+    browserSettings = nextBrowserSettings.settings;
+    browserSettingsError = nextBrowserSettings.error;
+    await refreshBrowserFill();
+    if (generation !== epoch) return;
     if (!status.unlocked) {
       clearSecrets();
       locked();
@@ -187,6 +205,8 @@ function vault() {
     void disableHello();
   });
   desktopSettings();
+  browserPreferences();
+  renderBrowserFill();
   document.querySelector("#lock")!.addEventListener("click", async () => {
     clearSecrets();
     status.unlocked = false;
@@ -203,6 +223,77 @@ function vault() {
   document.querySelector("#search")!.addEventListener("input", renderList);
   renderList();
   document.querySelector<HTMLInputElement>("#search")?.focus();
+}
+async function refreshBrowserFill() {
+  if (!native || pendingRead) return;
+  pendingRead = true;
+  try {
+    const next = await invoke<BrowserFill | null>("browser_pending");
+    const unchanged = JSON.stringify(next) === JSON.stringify(pendingFill);
+    pendingFill = next;
+    if (!unchanged || !document.querySelector("#browser-fill")) renderBrowserFill();
+  } catch {
+    pendingFill = null;
+    renderBrowserFill();
+  } finally { pendingRead = false; }
+}
+function renderBrowserFill() {
+  document.querySelector("#browser-fill")?.remove();
+  if (!pendingFill || !native) return;
+  const request = pendingFill;
+  const panel = document.createElement("section");
+  panel.id = "browser-fill";
+  panel.className = "browser-fill";
+  panel.setAttribute("aria-label", "Browser autofill approval");
+  panel.innerHTML = `<span class="eyebrow">BROWSER AUTOFILL REQUEST</span><h2>${esc(request.title || "Saved account")}</h2><p class="fill-origin">${esc(request.origin)}</p><p>${esc(request.username || "No username")}</p><p class="hint">${status.unlocked ? "Approve only if you just selected this account in your browser. This shares the password once with the requesting extension, which checks the original tab before filling. It will not submit the form." : "Unlock below, then approve this account for the site shown here. Unlocking alone does not share your password."}</p><div class="fill-actions"><button class="secondary" id="reject-browser-fill">Cancel request</button><button class="primary" id="approve-browser-fill" ${status.unlocked ? "" : "disabled"}>Approve and fill</button></div><p id="browser-fill-status" role="status"></p>`;
+  document.querySelector("main .topbar")?.after(panel);
+  panel.querySelector("#reject-browser-fill")!.addEventListener("click", async () => {
+    await invoke("reject_browser_fill", { requestId: request.requestId }).catch(() => {});
+    await refreshBrowserFill();
+  });
+  panel.querySelector<HTMLButtonElement>("#approve-browser-fill")!.addEventListener("click", async (event) => {
+    const button = event.currentTarget as HTMLButtonElement;
+    const generation = epoch;
+    button.disabled = true;
+    try {
+      await invoke("approve_browser_fill", { requestId: request.requestId });
+      if (generation !== epoch) return;
+      pendingFill = null;
+      panel.remove();
+      message("Approved for the requesting browser tab. The extension will fill it if that page is still unchanged.");
+    } catch (error) {
+      if (generation === epoch && panel.isConnected) {
+        panel.querySelector("#browser-fill-status")!.textContent = String(error);
+        button.disabled = !status.unlocked;
+      }
+    }
+  });
+}
+function browserPreferences() {
+  const section = document.createElement("section");
+  section.className = "desktop-settings";
+  section.setAttribute("aria-label", "Browser privacy settings");
+  section.innerHTML = `<h3>Browser autofill</h3><p class="hint">Select an account in Brave or Edge to bring Fakkarni forward. Unlock if needed, then approve the site and account before filling. Autofill never submits a form.</p><div class="desktop-toggles"><label><input type="checkbox" id="locked-suggestions" ${browserSettings.showAccountsWhenLocked ? "checked" : ""} ${browserSettingsError ? "disabled" : ""}><span>Show saved accounts in the browser while my vault is locked</span></label></div><p class="hint">When enabled, account names, usernames, and website origins are stored in a separate unencrypted file on this PC, so they remain visible while locked and to programs running as your Windows user. Passwords and notes stay encrypted. Turning this off removes the local index.</p><p id="browser-preferences-status" class="hint" role="status">${esc(browserSettingsError || "")}</p>`;
+  document.querySelector("footer")!.before(section);
+  const checkbox = section.querySelector<HTMLInputElement>("#locked-suggestions")!;
+  checkbox.addEventListener("change", async () => {
+    const generation = epoch;
+    const settings = { showAccountsWhenLocked: checkbox.checked };
+    checkbox.disabled = true;
+    const feedback = section.querySelector("#browser-preferences-status")!;
+    try {
+      await invoke("set_browser_settings", { settings });
+      if (generation !== epoch || !section.isConnected) return;
+      browserSettings = settings;
+      feedback.textContent = settings.showAccountsWhenLocked ? "Local account index enabled. Passwords still require vault unlock and approval." : "Locked account index removed.";
+    } catch (error) {
+      if (generation !== epoch || !section.isConnected) return;
+      checkbox.checked = browserSettings.showAccountsWhenLocked;
+      feedback.textContent = String(error);
+    } finally {
+      if (generation === epoch && section.isConnected) checkbox.disabled = false;
+    }
+  });
 }
 function desktopSettings() {
   const section = document.createElement("section");
@@ -451,6 +542,8 @@ function editor(entry?: FullEntry) {
   dialog.querySelector<HTMLInputElement>('input[name="title"]')?.focus();
 }
 if (native) {
+  await listen("browser-fill-request", () => { void refreshBrowserFill(); });
+  window.setInterval(() => { void refreshBrowserFill(); }, 1000);
   await listen("vault-locked", () => {
     clearSecrets();
     status.unlocked = false;

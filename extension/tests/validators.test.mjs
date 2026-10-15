@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { httpsOrigin, validateResponse } from "../dist/validators.js";
+import { httpsOrigin, validateResponse, validateCredential } from "../dist/validators.js";
 
 test("accepts only canonical HTTPS origins without embedded credentials", () => {
   assert.equal(
@@ -116,7 +116,17 @@ test("manifest identity matches native host registration and permissions stay mi
     .replace(/[0-9a-f]/g, (c) => String.fromCharCode(97 + parseInt(c, 16)));
   assert.equal(identity.extensionId, expected);
   assert.equal(identity.nativeHost, "org.fakkarni.bridge");
-  assert.deepEqual(manifest.permissions, ["activeTab", "nativeMessaging"]);
+  assert.deepEqual(manifest.permissions, ["activeTab", "nativeMessaging", "scripting"]);
+  assert.deepEqual(manifest.background, {service_worker: "dist/background.js", type: "module"});
   assert.equal(manifest.host_permissions, undefined);
   assert.equal(manifest.content_scripts, undefined);
+});
+
+test("locked suggestions contain only bounded metadata; credential channel is separate", () => {
+  const entry = {id: "1", title: "Example", username: "me", url: "https://example.com", password: "discard"};
+  assert.deepEqual(validateResponse({version: 1, status: "locked", matches: [entry]}).matches[0],
+    {id: "1", title: "Example", username: "me", url: "https://example.com"});
+  assert.deepEqual(validateCredential({username: "me", password: "secret", extra: "discard"}), {username: "me", password: "secret"});
+  for (const credential of [null, {}, {username: "me", password: ""}, {username: "me", password: "x".repeat(4097)}, {username: "\0", password: "secret"}])
+    assert.equal(validateCredential(credential), null);
 });

@@ -12,6 +12,7 @@ declare const chrome:
       };
       runtime: {
         sendNativeMessage(host: string, message: unknown): Promise<unknown>;
+        sendMessage(message: unknown): Promise<unknown>;
       };
     }
   | undefined;

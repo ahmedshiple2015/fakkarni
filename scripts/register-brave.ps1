@@ -1,6 +1,7 @@
 param(
     [ValidateSet('Brave', 'Edge')][string]$Browser = 'Brave',
-    [string]$BinaryPath = (Join-Path (Split-Path $PSScriptRoot -Parent) 'target\debug\fakkarni-native-host.exe')
+    [string]$BinaryPath = (Join-Path (Split-Path $PSScriptRoot -Parent) 'target\debug\fakkarni-native-host.exe'),
+    [string]$DesktopPath = (Join-Path (Split-Path $PSScriptRoot -Parent) 'target\debug\fakkarni.exe')
 )
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path $PSScriptRoot -Parent
@@ -13,7 +14,11 @@ if ([IO.Path]::GetExtension($binary) -ne '.exe') { throw 'Expected the compiled 
 $destination = Join-Path $env:LOCALAPPDATA 'org.fakkarni.desktop\native-messaging'
 New-Item -ItemType Directory -Force -Path $destination | Out-Null
 $installedBinary = Join-Path $destination 'fakkarni-native-host.exe'
+$desktopBinary = (Resolve-Path -LiteralPath $DesktopPath).Path
+if ([IO.Path]::GetExtension($desktopBinary) -ne '.exe') { throw 'Expected the desktop application executable.' }
 Copy-Item -LiteralPath $binary -Destination $installedBinary -Force
+$launchConfig = @{ desktopExeFullPath = $desktopBinary } | ConvertTo-Json
+[IO.File]::WriteAllText((Join-Path $destination 'desktop-path.json'), $launchConfig, [Text.UTF8Encoding]::new($false))
 $manifestPath = Join-Path $destination 'org.fakkarni.bridge.json'
 $manifest = @{
     name = $identity.nativeHost

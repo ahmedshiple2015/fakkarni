@@ -8,3 +8,8 @@ license.workspace = true
 fakkarni-browser-bridge = { path = "../browser-bridge" }
 fakkarni-vault = { path = "../vault-core" }
 serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+zeroize = "1"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console"] }

@@ -87,7 +87,7 @@ li {
   display: flex;
   align-items: center;
   gap: 11px;
-  padding: 13px 10px;
+  padding: 0;
   background: #211a2c;
   border: 1px solid #392b48;
   border-radius: 9px;
@@ -104,6 +104,9 @@ li {
   color: #c9a7f8;
   font-size: 16px;
 }
+.account-button { display: flex; align-items: center; gap: 11px; background: transparent; color: inherit; border: 0; padding: 13px 10px; }
+.account-button:hover:not(:disabled) { background: #352743; }
+.account-button small { display: block; color: #c9a7f8; margin-top: 8px; }
 li div {
   min-width: 0;
 }

@@ -216,7 +216,8 @@ pub fn init(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     // Preserve invalid files until an explicit settings save. Safe defaults must
     // never register startup implicitly or leave an inaccessible hidden window.
     let settings = read_settings(&path).unwrap_or_default();
-    let minimized = settings.start_minimized;
+    let minimized =
+        settings.start_minimized || std::env::args().any(|arg| arg == "--browser-background");
     app.manage(LifecycleState {
         settings: Mutex::new(settings),
         path,

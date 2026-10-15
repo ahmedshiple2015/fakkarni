@@ -9,6 +9,8 @@
 *.keyx
 *.key
 windows-hello.json
+browser-index.json
+desktop-path.json
 .env
 .env.*
 *.log

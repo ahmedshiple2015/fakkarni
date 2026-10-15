@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod browser;
 mod hello;
 mod lifecycle;
 
@@ -141,17 +142,20 @@ mod revocation_tests {
             os_locked: AtomicBool::new(false),
             suspended: AtomicBool::new(false),
         };
+        let browser = browser::BrowserState::new(dir.path().join("browser.json"));
         let request = || Request::Match {
             version: 1,
             origin: "https://example.test".into(),
         };
-        let response = browser_suggestions(&state, request());
+        let response = browser::handle(&state, &browser, None, request());
         assert_eq!(response.status, Status::Ok);
         assert_eq!(response.matches.len(), 1);
         assert_eq!(response.matches[0].url, "https://example.test");
         assert_eq!(response.matches[0].username, "synthetic-user");
-        assert!(browser_suggestions(
+        assert!(browser::handle(
             &state,
+            &browser,
+            None,
             Request::Match {
                 version: 1,
                 origin: "https://example.test.attacker.test".into()
@@ -160,8 +164,10 @@ mod revocation_tests {
         .matches
         .is_empty());
         assert_eq!(
-            browser_suggestions(
+            browser::handle(
                 &state,
+                &browser,
+                None,
                 Request::Match {
                     version: 1,
                     origin: "https://example.test/login".into()
@@ -173,13 +179,13 @@ mod revocation_tests {
         {
             let _busy = state.inner.lock().unwrap();
             assert_eq!(
-                browser_suggestions(&state, request()).status,
+                browser::handle(&state, &browser, None, request()).status,
                 Status::Unavailable
             );
         }
         state.revoke();
         assert_eq!(
-            browser_suggestions(&state, request()).status,
+            browser::handle(&state, &browser, None, request()).status,
             Status::Locked
         );
     }
@@ -260,54 +266,13 @@ fn generate_password(length: usize) -> Result<String, String> {
     fakkarni_vault::generate_password(length).map_err(|e| e.to_string())
 }
 
-fn browser_suggestions(
-    vault: &SharedState,
-    request: fakkarni_browser_bridge::Request,
-) -> fakkarni_browser_bridge::Response {
-    use fakkarni_browser_bridge::{Match, Request, Response, Status};
-    let Request::Match { version, origin } = request;
-    if version != 1 || fakkarni_vault::validate_origin(&origin).is_err() {
-        return Response::empty(Status::Error);
-    }
-    let epoch = vault.epoch.load(Ordering::SeqCst);
-    if vault.blocked() {
-        return Response::empty(Status::Locked);
-    }
-    let Ok(mut inner) = vault.inner.try_lock() else {
-        return Response::empty(Status::Unavailable);
-    };
-    if inner.epoch != epoch {
-        inner.vault.lock();
-        inner.epoch = epoch;
-    }
-    let matches = match inner.vault.matches(&origin) {
-        Ok(entries) => entries
-            .into_iter()
-            .map(|entry| Match {
-                id: entry.id,
-                title: entry.title,
-                username: entry.username,
-                // Browser suggestions never need the saved URL's path/query/fragment.
-                url: origin.clone(),
-            })
-            .collect(),
-        Err(fakkarni_vault::VaultError::Locked) => return Response::empty(Status::Locked),
-        Err(_) => return Response::empty(Status::Error),
-    };
-    if vault.blocked() || vault.epoch.load(Ordering::SeqCst) != epoch {
-        return Response::empty(Status::Locked);
-    }
-    Response {
-        version: 1,
-        status: Status::Ok,
-        matches,
-    }
-}
-
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-            if !args.iter().any(|arg| arg == "--autostart") {
+            if !args
+                .iter()
+                .any(|arg| arg == "--autostart" || arg == "--browser-background")
+            {
                 lifecycle::show_main(app);
             }
         }))
@@ -328,11 +293,22 @@ fn main() {
                 suspended: AtomicBool::new(false),
             });
             app.manage(vault.clone());
+            let browser_state = Arc::new(browser::BrowserState::new(
+                data_dir.join("browser-index.json"),
+            ));
+            app.manage(browser_state.clone());
             #[cfg(windows)]
             {
                 let browser_vault = vault.clone();
+                let browser_handle = app.handle().clone();
+                let browser_state = browser_state.clone();
                 let bridge = fakkarni_browser_bridge::start_server(move |request| {
-                    browser_suggestions(&browser_vault, request)
+                    browser::handle(
+                        &browser_vault,
+                        &browser_state,
+                        Some(&browser_handle),
+                        request,
+                    )
                 })?;
                 app.manage(bridge);
             }
@@ -351,6 +327,12 @@ fn main() {
                             inner.epoch = epoch;
                         }
                         let unlocked = inner.vault.status().unlocked;
+                        if !unlocked {
+                            browser_state.revoke_ready();
+                        }
+                        if unlocked {
+                            browser_state.refresh(&mut inner.vault);
+                        }
                         if previously_unlocked && !unlocked {
                             vault.epoch.fetch_add(1, Ordering::SeqCst);
                             inner.epoch = vault.epoch.load(Ordering::SeqCst);
@@ -378,6 +360,11 @@ fn main() {
             hello::enable_hello,
             hello::unlock_hello,
             hello::disable_hello,
+            browser::browser_pending,
+            browser::approve_browser_fill,
+            browser::reject_browser_fill,
+            browser::browser_settings,
+            browser::set_browser_settings,
             lifecycle::get_app_settings,
             lifecycle::set_app_settings
         ])

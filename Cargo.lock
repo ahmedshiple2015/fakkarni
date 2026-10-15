@@ -1156,6 +1156,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-single-instance",
  "tempfile",
+ "url",
  "windows-registry",
  "windows-sys 0.61.2",
  "zeroize",
@@ -1170,6 +1171,7 @@ dependencies = [
  "sha2 0.10.9",
  "tokio",
  "windows-sys 0.61.2",
+ "zeroize",
 ]
 
 [[package]]
@@ -1192,7 +1194,10 @@ version = "0.1.0"
 dependencies = [
  "fakkarni-browser-bridge",
  "fakkarni-vault",
+ "serde",
  "serde_json",
+ "windows-sys 0.61.2",
+ "zeroize",
 ]
 
 [[package]]

@@ -12,6 +12,7 @@ fn pipe_roundtrip_reuse_first_instance_and_slow_client_deadline() {
     let expected = Response {
         version: 1,
         status: Status::Ok,
+        credential: None,
         matches: vec![Match {
             id: "synthetic".into(),
             title: "Synthetic test login".into(),

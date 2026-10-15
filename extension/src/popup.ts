@@ -84,8 +84,10 @@ async function load() {
       return;
     }
     if (response.status === "locked") {
-      setState("Unlock your vault in the Fakkarni desktop app, then refresh.");
-      return;
+      if (!response.matches.length) {
+        setState("Unlock your vault in the desktop app, then refresh. To show accounts while locked, enable locked account suggestions in desktop preferences.");
+        return;
+      }
     }
     if (response.status === "unavailable") {
       setState(
@@ -93,13 +95,13 @@ async function load() {
       );
       return;
     }
-    if (response.status === "error") {
+    if (!["ok", "locked"].includes(response.status)) {
       setState(
         "The desktop vault could not complete this request. Try refreshing.",
       );
       return;
     }
-    setState(
+    setState(response.status === "locked" ? "Vault locked. Choose an account to open Fakkarni, unlock, and approve filling." :
       response.matches.length
         ? `${response.matches.length} matching ${response.matches.length === 1 ? "account" : "accounts"}`
         : "No saved accounts match this site. Add a login in the desktop app.",
@@ -116,7 +118,25 @@ async function load() {
       const username = document.createElement("span");
       username.textContent = match.username || "No username";
       copy.append(title, username);
-      row.append(icon, copy);
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "account-button";
+      const action = document.createElement("small");
+      action.textContent = response.status === "locked" ? "Unlock and fill →" : "Fill →";
+      copy.append(action);
+      button.append(icon, copy);
+      button.addEventListener("click", async () => {
+        button.disabled = true;
+        try {
+          const result = await api.runtime.sendMessage({action: "fill_account", tabId: tab.id, url: tab.url, id: match.id});
+          if (current !== generation) return;
+          setState(result && typeof result === "object" && "ok" in result && result.ok === true
+            ? "Continue in Fakkarni: unlock if needed, then approve this account. Filling continues when this popup closes."
+            : "The page changed or filling could not start. Refresh and try again.");
+        } catch { if (current === generation) setState("Unable to start filling. Reload the extension and retry."); }
+        finally { if (current === generation) button.disabled = false; }
+      });
+      row.append(button);
       list.append(row);
     }
   } catch {

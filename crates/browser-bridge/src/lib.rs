@@ -1,4 +1,4 @@
-//! Read-only local browser suggestions. This protocol intentionally has no password operation.
+//! Local browser suggestions and explicitly desktop-approved, one-time autofill.
 //!
 //! Windows ACLs restrict the pipe to the current user and SYSTEM. They do not authenticate
 //! a particular extension or native-host executable: a process running as the same user
@@ -13,22 +13,72 @@ pub const MAX_FRAME_BYTES: usize = 32 * 1024;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
-    Match { version: u32, origin: String },
+    Match {
+        version: u32,
+        origin: String,
+    },
+    BeginFill {
+        version: u32,
+        origin: String,
+        id: String,
+        request_id: String,
+    },
+    PollFill {
+        version: u32,
+        origin: String,
+        request_id: String,
+    },
+    CancelFill {
+        version: u32,
+        origin: String,
+        request_id: String,
+    },
 }
 
 impl Request {
-    pub fn validate(&self) -> io::Result<()> {
+    pub fn origin(&self) -> &str {
         match self {
-            Self::Match { version, origin }
-                if *version == PROTOCOL_VERSION
-                    && !origin.is_empty()
-                    && origin.len() <= 4096
-                    && !origin.contains('\0') =>
-            {
-                Ok(())
-            }
-            _ => Err(invalid("Unsupported or invalid suggestion request.")),
+            Self::Match { origin, .. }
+            | Self::BeginFill { origin, .. }
+            | Self::PollFill { origin, .. }
+            | Self::CancelFill { origin, .. } => origin,
         }
+    }
+    pub fn validate(&self) -> io::Result<()> {
+        let (version, origin, request_id, id) = match self {
+            Self::Match { version, origin } => (*version, origin, None, None),
+            Self::BeginFill {
+                version,
+                origin,
+                request_id,
+                id,
+            } => (*version, origin, Some(request_id), Some(id)),
+            Self::PollFill {
+                version,
+                origin,
+                request_id,
+            }
+            | Self::CancelFill {
+                version,
+                origin,
+                request_id,
+            } => (*version, origin, Some(request_id), None),
+        };
+        if version != PROTOCOL_VERSION
+            || origin.is_empty()
+            || origin.len() > 4096
+            || origin.contains('\0')
+            || request_id.is_some_and(|s| {
+                s.len() != 32
+                    || !s
+                        .bytes()
+                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            })
+            || id.is_some_and(|s| s.is_empty() || s.len() > 128 || s.contains('\0'))
+        {
+            return Err(invalid("Unsupported or invalid browser request."));
+        }
+        Ok(())
     }
 }
 
@@ -39,6 +89,8 @@ pub enum Status {
     Locked,
     Unavailable,
     Error,
+    Pending,
+    Cancelled,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -50,12 +102,33 @@ pub struct Match {
     pub url: String,
 }
 
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Credential {
+    pub username: String,
+    pub password: String,
+}
+impl std::fmt::Debug for Credential {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Credential([redacted])")
+    }
+}
+impl Drop for Credential {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.username.zeroize();
+        self.password.zeroize();
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Response {
     pub version: u32,
     pub status: Status,
     pub matches: Vec<Match>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential: Option<Credential>,
 }
 
 impl Response {
@@ -64,11 +137,19 @@ impl Response {
             version: PROTOCOL_VERSION,
             status,
             matches: Vec::new(),
+            credential: None,
         }
     }
     fn validate(&self) -> io::Result<()> {
         if self.version != PROTOCOL_VERSION
-            || (self.status != Status::Ok && !self.matches.is_empty())
+            || (!matches!(self.status, Status::Ok | Status::Locked) && !self.matches.is_empty())
+            || self.matches.len() > 50
+            || self.credential.as_ref().is_some_and(|c| {
+                self.status != Status::Ok
+                    || !self.matches.is_empty()
+                    || c.username.len() > 4096
+                    || c.password.len() > 4096
+            })
         {
             return Err(invalid("Invalid suggestion response."));
         }
@@ -290,11 +371,11 @@ mod windows {
             }
             _ => Response::empty(Status::Error),
         };
-        let bytes = if response.validate().is_ok() {
+        let bytes = zeroize::Zeroizing::new(if response.validate().is_ok() {
             serde_json::to_vec(&response).map_err(|_| invalid("Couldn't serialize suggestions."))?
         } else {
             serde_json::to_vec(&Response::empty(Status::Error)).expect("fixed response serializes")
-        };
+        });
         if bytes.len() > MAX_FRAME_BYTES {
             let error = serde_json::to_vec(&Response::empty(Status::Error))
                 .expect("fixed response serializes");
@@ -403,7 +484,8 @@ mod windows {
                     }
                 };
                 write_async(&mut pipe, &bytes, MAX_NATIVE_REQUEST_BYTES).await?;
-                let response = read_async(&mut pipe, MAX_FRAME_BYTES).await?;
+                let response =
+                    zeroize::Zeroizing::new(read_async(&mut pipe, MAX_FRAME_BYTES).await?);
                 let response: Response = serde_json::from_slice(&response)
                     .map_err(|_| invalid("Invalid suggestion response."))?;
                 response.validate()?;
@@ -480,7 +562,39 @@ mod tests {
         assert!(write_frame(&mut Vec::new(), &[]).is_err());
     }
     #[test]
-    fn protocol_has_no_secret_or_unknown_operations() {
+    fn fill_requests_require_bounded_random_identifiers() {
+        let valid = Request::BeginFill {
+            version: 1,
+            origin: "https://example.test".into(),
+            id: "account".into(),
+            request_id: "0123456789abcdef0123456789abcdef".into(),
+        };
+        assert!(valid.validate().is_ok());
+        for token in [
+            "",
+            "short",
+            "0123456789abcdef0123456789abcdeG",
+            "0123456789abcdef0123456789abcdef00",
+        ] {
+            assert!(Request::PollFill {
+                version: 1,
+                origin: "https://example.test".into(),
+                request_id: token.into()
+            }
+            .validate()
+            .is_err());
+        }
+        let credential = Credential {
+            username: "user".into(),
+            password: "private-secret".into(),
+        };
+        assert!(!format!("{credential:?}").contains("private-secret"));
+        let mut response = Response::empty(Status::Pending);
+        response.credential = Some(credential);
+        assert!(response.validate().is_err());
+    }
+    #[test]
+    fn protocol_rejects_unknown_operations_and_invalid_responses() {
         for bytes in [
             r#"{"action":"reveal","version":1,"id":"x"}"#,
             r#"{"action":"match","version":1,"origin":"https://example.com","password":"x"}"#,
@@ -495,7 +609,8 @@ mod tests {
         .is_err());
         assert!(Response {
             version: 1,
-            status: Status::Locked,
+            status: Status::Error,
+            credential: None,
             matches: vec![Match {
                 id: "x".into(),
                 title: "x".into(),
