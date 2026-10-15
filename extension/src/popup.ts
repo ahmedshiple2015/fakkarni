@@ -41,13 +41,24 @@ async function load() {
     originLabel.textContent = origin;
     setState("Checking your local vault…");
     let raw: unknown;
+    let connectionError = "";
     try {
       raw = await api.runtime.sendNativeMessage(host, {
         version: 1,
         action: "match",
         origin,
       });
-    } catch {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      if (/not found|not registered/i.test(message)) {
+        connectionError = "Brave cannot find the Fakkarni browser bridge. Run scripts/register-brave.ps1, restart Brave, then retry. (HOST_NOT_FOUND)";
+      } else if (/forbidden|not allowed|permission/i.test(message)) {
+        connectionError = "Brave denied this extension access to the bridge. Check its ID at brave://extensions and reinstall the bridge. (HOST_DENIED)";
+      } else if (/exited|disconnect|communicat|launch|start/i.test(message)) {
+        connectionError = "Brave could not start or communicate with the Fakkarni bridge. Reinstall the bridge and restart Brave. (HOST_CONNECTION_FAILED)";
+      } else {
+        connectionError = "Brave could not connect to the Fakkarni browser bridge. Restart Brave and retry. (NATIVE_MESSAGE_FAILED)";
+      }
       raw = { version: 1, status: "unavailable", matches: [] };
     }
     if (current !== generation) return;
@@ -75,7 +86,7 @@ async function load() {
     }
     if (response.status === "unavailable") {
       setState(
-        "Start the Fakkarni desktop app and check that the browser bridge is installed, then refresh.",
+        connectionError || "The browser bridge is installed, but it cannot reach Fakkarni. Start the desktop app, then refresh. (DESKTOP_UNAVAILABLE)",
       );
       return;
     }
