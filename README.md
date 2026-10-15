@@ -12,11 +12,11 @@ A local-only, open-source desktop password manager for Windows. It runs as a nor
 - Five-minute inactivity locking and Windows session/power event handling.
 - Encrypted temporary writes, atomic replacement, cooperating-instance locking, and external-change detection.
 - Restricted file profile checked before key derivation. General-purpose KDBX import is not supported yet.
-- Brave extension preview for matching account names/usernames, connected through a local Windows pipe and Native Messaging.
+- Brave and Edge extension with account suggestions and desktop-approved click-to-fill over a local Windows pipe and Native Messaging.
 - Optional Windows Hello quick unlock, keeping the master password as recovery fallback; requires compatible TPM-backed Windows Hello protection.
 - System tray with Open, Lock vault, and Quit; optional startup with Windows and opening in the tray.
 
-The extension currently shows suggestions only. Automatic saving/filling, password import UI, backup/restore UI, and native-app detection are still pending. See [Brave setup](docs/BRAVE.md) and [Windows Hello and desktop preferences](docs/DESKTOP.md).
+The extension fills an explicitly selected login after desktop approval. An optional unencrypted local account index shows names, usernames, and site origins while locked; passwords remain encrypted. Automatic saving, password import UI, backup/restore UI, and native-app detection are still pending. See [Brave setup](docs/BRAVE.md) and [Windows Hello and desktop preferences](docs/DESKTOP.md).
 
 ## Run locally
 
@@ -48,6 +48,6 @@ No cloud service, telemetry, remote assets, or automatic network update checks. 
 
 ## Later milestones
 
-Windows Hello unlock, Firefox support, foreground-app suggestions, and individually tested filling for desktop applications such as Discord, Steam, and Riot clients.
+Firefox support, foreground-app suggestions, and individually tested filling for desktop applications such as Discord, Steam, and Riot clients.
 
 See [the implementation plan](docs/PLAN.md) and [security design](docs/SECURITY-DESIGN.md).

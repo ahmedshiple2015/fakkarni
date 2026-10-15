@@ -46,3 +46,7 @@ Protect encrypted data on disk and reduce accidental disclosure to webpages or l
 ## Required review evidence
 
 Interoperability, corrupted input handling, interrupted writes, locked-session refusal, origin matching, navigation races, malicious frames, IPC authorization, and absence of unexpected runtime network requests must be verified before release.
+
+## Current autofill implementation
+
+The local pipe is not trusted as proof of browser identity. Every password release requires a visible native desktop approval showing the exact HTTPS origin and selected account, an unlocked vault, and an expiring one-time request capability. Lock epoch and navigation/document identity are checked again before delivery and injection. See [browser setup and boundaries](BRAVE.md). The optional locked-account index intentionally exposes account metadata locally after explicit opt-in, while preserving password encryption.
