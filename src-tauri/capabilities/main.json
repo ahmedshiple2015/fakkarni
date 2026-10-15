@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main",
+  "description": "Local application window; no filesystem, shell, or HTTP plugins.",
+  "windows": ["main"],
+  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten"]
+}
