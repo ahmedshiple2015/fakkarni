@@ -47,3 +47,9 @@ Inside the unlocked desktop app, enable **Show saved accounts in the browser whi
 Run `npm run test:extension`, `cargo test --workspace --locked`, and strict Clippy. Synthetic tests cover immediate and post-unlock delivery, repeated fills, one-time delivery, origin binding, cancellation, lock revocation, metadata limits, navigation/document changes, and unsupported forms. A process smoke test verifies cold desktop launch and closure of the native protocol pipe. Real browser filling and Windows Hello prompts still require manual checks on target devices.
 
 References: [Chromium Native Messaging](https://developer.chrome.com/docs/extensions/develop/concepts/native-messaging), [Microsoft Edge Native Messaging](https://learn.microsoft.com/en-us/microsoft-edge/extensions/developer-guide/native-messaging).
+
+## Bridge troubleshooting
+
+Run `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-browser-bridge.ps1 -Probe` to check both registry views, the installed manifest and executable, desktop launch configuration, and a synthetic-origin native protocol request. It prints only booleans, protocol status, and a match count; it does not print stored accounts, passwords, or response bodies. A passing direct probe does not establish that an already-running browser has rediscovered its native host.
+
+Registration is idempotent: unchanged binaries, JSON files, and registry values are left untouched. Changed files are staged, flushed, and replaced atomically; Brave and Edge registration is serialized because they share the same host. This prevents partial installed files during updates. If the direct probe passes but the browser still reports HOST_NOT_FOUND, save unfinished work and fully exit that browser, including background processes, before relaunching. No vault reset or recreation is needed.
