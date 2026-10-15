@@ -119,24 +119,40 @@ function selectView(next: "vault" | "settings", focus = true) {
   }
   if (focus) document.querySelector<HTMLElement>(settings ? "#page-title" : "#search")?.focus();
 }
+function passwordControl(id: string, attributes: string, label: string) {
+  return `<div class="password-control"><input id="${id}" type="password" ${attributes}><button type="button" class="reveal-control" data-password-toggle="${id}" data-password-label="${label}" aria-label="Show ${label}" aria-pressed="false">${icon("eye")}</button></div>`;
+}
+function attachPasswordControls(root: Element) {
+  root.querySelectorAll<HTMLButtonElement>("[data-password-toggle]").forEach(button => {
+    button.addEventListener("click", () => {
+      const field = root.querySelector<HTMLInputElement>(`#${button.dataset.passwordToggle}`);
+      if (!field || field.disabled) return;
+      const show = field.type === "password";
+      field.type = show ? "text" : "password";
+      button.setAttribute("aria-pressed", String(show));
+      button.setAttribute("aria-label", `${show ? "Hide" : "Show"} ${button.dataset.passwordLabel}`);
+    });
+  });
+}
 function locked() {
   shell(
-    `<div class="topbar"><span class="breadcrumb">Personal vault</span><span class="pill">${icon("lock")}${native ? "Vault locked" : "Design preview"}</span></div><section class="welcome"><div class="large-shield">${icon("keyhole")}</div><h1>${status.exists ? "Unlock your vault" : "Create your vault"}</h1><p>${native ? (status.exists ? "Enter your master password to continue." : "Choose a master password to protect your saved logins.") : "This browser preview has no vault connection. Open the desktop app to create or unlock your encrypted vault."}</p><form id="unlock"><label>Master password<input id="master" type="password" minlength="${status.exists ? 1 : 12}" required autocomplete="${status.exists ? "current-password" : "new-password"}" ${native ? "" : "disabled"} placeholder="${status.exists ? "Enter your master password" : "At least 12 characters"}"></label>${!status.exists ? `<label>Confirm master password<input id="confirm" type="password" required autocomplete="new-password" ${native ? "" : "disabled"} placeholder="Repeat your master password"></label><small class="hint">Keep it somewhere safe. There is no password reset.</small>` : ""}<button class="primary wide" ${native ? "" : "disabled"}>${status.exists ? "Unlock vault" : "Create my vault"}${icon("arrow")}</button><div id="message" role="status"></div></form><div class="privacy">${icon("lock")}Stored on this PC</div></section>`,
+    `<div class="topbar"><span class="breadcrumb">Personal vault</span><span class="pill">${icon("lock")}${native ? "Vault locked" : "Design preview"}</span></div><section class="welcome"><div class="auth-heading"><div class="large-shield">${icon("keyhole")}</div><h1>${status.exists ? "Your vault is locked" : "Create your vault"}</h1><p>${native ? (status.exists ? "Unlock to access your saved logins." : "Choose a master password to protect your logins.") : "Preview only. Open the desktop app to access your vault."}</p></div><form id="unlock"><div class="auth-field"><label for="master">Master password</label>${passwordControl("master", `minlength="${status.exists ? 1 : 12}" required autocomplete="${status.exists ? "current-password" : "new-password"}" ${native ? "" : "disabled"} placeholder="${status.exists ? "Enter your master password" : "At least 12 characters"}"`, "master password")}</div>${!status.exists ? `<div class="auth-field"><label for="confirm">Confirm master password</label>${passwordControl("confirm", `required autocomplete="new-password" ${native ? "" : "disabled"} placeholder="Repeat your master password"`, "master password confirmation")}</div><small class="hint">Keep it somewhere safe. There is no password reset.</small>` : ""}<button id="unlock-submit" type="submit" class="primary wide" ${native ? "" : "disabled"}><span>${status.exists ? "Unlock vault" : "Create vault"}</span>${icon("arrow")}</button><div id="message" role="status"></div></form><div class="privacy">${icon("lock")}Stored on this PC</div></section>`,
   );
   const unlockForm = document.querySelector<HTMLFormElement>("#unlock")!;
   renderBrowserFill();
+  attachPasswordControls(unlockForm);
   if (status.exists && hello.enabled) {
-    unlockForm.querySelector("button")!.classList.replace("primary", "secondary");
+    unlockForm.querySelector("#unlock-submit")!.classList.replace("primary", "secondary");
     const button = document.createElement("button");
     button.id = "hello-unlock";
     button.className = "primary wide hello-unlock";
-    button.textContent = "Unlock with Windows Hello";
+    button.innerHTML = `${icon("fingerprint")}<span>Unlock with Windows Hello</span>${icon("arrow")}`;
     button.disabled = !native || !hello.available;
     unlockForm.before(button);
     const fallback = document.createElement("p");
-    fallback.className = "hint";
-    fallback.textContent = "Or use your master password as a recovery fallback.";
-    unlockForm.prepend(fallback);
+    fallback.className = "auth-divider";
+    fallback.textContent = "or use your master password";
+    unlockForm.before(fallback);
     button.addEventListener("click", async () => {
       if (!native) return;
       const generation = epoch;
@@ -163,9 +179,9 @@ function locked() {
   unlockForm.after(helper);
   if (native) {
     const restore = document.createElement("button");
-    restore.className = "text-button";
+    restore.className = "text-button import-action";
     restore.type = "button";
-    restore.textContent = "Import or restore an encrypted vault";
+    restore.innerHTML = `${icon("folder")}<span>Import or restore an encrypted vault</span>`;
     helper.after(restore);
     restore.addEventListener("click", restoreBackup);
   }
@@ -194,7 +210,7 @@ function locked() {
       const confirmation = document.querySelector<HTMLInputElement>("#confirm");
       if (confirmation) confirmation.value = "";
       const button =
-        document.querySelector<HTMLButtonElement>("#unlock button")!;
+        document.querySelector<HTMLButtonElement>("#unlock-submit")!;
       button.disabled = true;
       message("Opening your vault…");
       try {
@@ -258,13 +274,13 @@ async function refresh() {
 }
 function vault() {
   shell(
-    `<header class="topbar" id="workspace-heading" hidden><div><div class="page-heading"><h1 id="page-title" tabindex="-1">Settings</h1><span class="count" id="page-count" hidden>${entries.length}</span></div><p id="page-description">Unlock, browser, and desktop preferences.</p></div></header><div id="vault-panel"><div class="vault-grid"><section class="accounts-panel" aria-label="Saved passwords"><div class="collection-heading"><h1>Passwords <span class="count" id="list-count">${entries.length}</span></h1><button id="add" class="primary">${icon("plus")}New login</button></div><div class="toolbar"><div class="search-wrap">${icon("search")}<input id="search" type="search" placeholder="Search logins…" aria-label="Search passwords"></div></div><div class="entry-list"></div></section><section id="detail" class="detail" aria-label="Login details"><div class="empty"><div class="large-shield">${icon("keyhole")}</div><h2>${entries.length ? "Select a login" : "No saved logins"}</h2><p>${entries.length ? "Choose an account to view its details." : "Use New login to add your first account."}</p></div></section></div></div><div id="settings-panel" hidden></div><footer><span>Encrypted on this PC</span><span>Auto-lock · ${status.idleMinutes} minutes</span></footer><div id="message" role="status"></div>`,
+    `<header class="topbar" id="workspace-heading" hidden><div><div class="page-heading"><h1 id="page-title" tabindex="-1">Settings</h1><span class="count" id="page-count" hidden>${entries.length}</span></div><p id="page-description">Unlock, browser, and desktop preferences.</p></div></header><div id="vault-panel"><div class="vault-grid"><section class="accounts-panel" aria-label="Saved passwords"><div class="collection-heading"><h1>Passwords <span class="count" id="list-count">${entries.length}</span></h1><button id="add" class="primary">${icon("plus")}New login</button></div><div class="toolbar"><div class="search-wrap">${icon("search")}<input id="search" type="search" placeholder="Search logins…" aria-label="Search passwords"></div></div><div class="entry-list"></div></section><section id="detail" class="detail" aria-label="Login details"><div class="empty"><div class="large-shield">${icon("keyhole")}</div><h2>${entries.length ? "Select a login" : "No saved logins"}</h2><p>${entries.length ? "Choose an account to view its details." : "Use New login to add your first account."}</p></div></section></div></div><div id="settings-panel" hidden><section class="settings-group" id="security-settings" aria-labelledby="security-settings-title"><div class="settings-group-heading"><h2 id="security-settings-title">${icon("shield")}Security &amp; browser</h2></div></section><section class="settings-group" id="desktop-settings-group" aria-labelledby="desktop-group-title"><div class="settings-group-heading"><h2 id="desktop-group-title">${icon("monitor")}Desktop &amp; backup</h2></div></section></div><footer><span>Encrypted on this PC</span><span>Auto-lock · ${status.idleMinutes} minutes</span></footer><div id="message" role="status"></div>`,
   );
   const settings = document.createElement("section");
   settings.className = "hello-settings";
   settings.setAttribute("aria-label", "Windows Hello settings");
-  settings.innerHTML = `<div><h2>Windows Hello</h2><p>${esc(hello.enabled ? "Enabled on this PC. Your master password remains your recovery fallback." : hello.reason || "Unlock with your Windows PIN, fingerprint, or face after setup.")}</p></div><button class="secondary" id="hello-settings" ${native && (hello.available || hello.enabled) ? "" : "disabled"}>${hello.enabled ? "Disable Windows Hello" : "Enable Windows Hello"}</button>`;
-  document.querySelector("#settings-panel")!.append(settings);
+  settings.innerHTML = `<div class="setting-row"><div class="setting-copy"><h3>Windows Hello</h3><p>${esc(hello.enabled ? "Enabled on this PC. Your master password remains your recovery fallback." : hello.reason || "Use your Windows PIN, fingerprint, or face to unlock.")}</p></div><button class="secondary" id="hello-settings" ${native && (hello.available || hello.enabled) ? "" : "disabled"}>${hello.enabled ? "Disable Windows Hello" : "Enable Windows Hello"}</button></div>`;
+  document.querySelector("#security-settings")!.append(settings);
   settings.querySelector("button")!.addEventListener("click", () => {
     if (!native) return;
     if (!hello.enabled) { helloSetup(); return; }
@@ -325,8 +341,8 @@ function browserPreferences() {
   const section = document.createElement("section");
   section.className = "desktop-settings";
   section.setAttribute("aria-label", "Browser privacy settings");
-  section.innerHTML = `<h2>Browser autofill</h2><p class="hint">Select an account in Brave or Edge to fill it immediately when unlocked. If locked, Fakkarni comes forward and fills after you unlock. Autofill never submits a form.</p><div class="desktop-toggles"><label><input type="checkbox" id="locked-suggestions" ${browserSettings.showAccountsWhenLocked ? "checked" : ""} ${browserSettingsError ? "disabled" : ""}><span>Show saved accounts in the browser while my vault is locked</span></label></div><p class="hint">When enabled, account names, usernames, and website origins are stored in a separate unencrypted file on this PC, so they remain visible while locked and to programs running as your Windows user. Passwords and notes stay encrypted. Turning this off removes the local index.</p><p id="browser-preferences-status" class="hint" role="status">${esc(browserSettingsError || "")}</p>`;
-  document.querySelector("#settings-panel")!.append(section);
+  section.innerHTML = `<label class="setting-toggle"><span class="setting-copy"><strong>Show accounts while locked</strong><small>See matching browser accounts before unlocking.</small><small id="locked-privacy" class="critical-hint">Names, usernames, and websites are stored outside the encrypted vault. Passwords stay encrypted.</small></span><input type="checkbox" role="switch" class="switch" id="locked-suggestions" aria-label="Show accounts while locked" aria-describedby="locked-privacy" ${browserSettings.showAccountsWhenLocked ? "checked" : ""} ${browserSettingsError ? "disabled" : ""}></label><details class="privacy-disclosure"><summary>About locked account suggestions</summary><p class="hint">Choose an account in Brave or Edge to fill it. Unlock Fakkarni first if needed; forms are never submitted automatically. The local index is an unencrypted file readable by programs running as your Windows user. Passwords and notes stay encrypted. Turning this option off removes the index.</p></details><p id="browser-preferences-status" class="hint" role="status">${esc(browserSettingsError || "")}</p>`;
+  document.querySelector("#security-settings")!.append(section);
   const checkbox = section.querySelector<HTMLInputElement>("#locked-suggestions")!;
   checkbox.addEventListener("change", async () => {
     const generation = epoch;
@@ -349,10 +365,10 @@ function browserPreferences() {
 }
 function backupPreferences() {
   const section = document.createElement("section");
-  section.className = "desktop-settings";
+  section.className = "desktop-settings backup-settings";
   section.setAttribute("aria-label", "Backup and PC transfer");
-  section.innerHTML = `<h2>Backup &amp; PC transfer</h2><p class="hint">Export a local encrypted copy for backup or to transfer to another PC. You need the master password used when the backup was made; Windows Hello alone cannot open it on another PC. Choose a folder outside cloud sync if you want it to stay on this device.</p><div class="fill-actions"><button class="secondary" id="create-backup">Export encrypted vault</button><button class="text-button" id="restore-backup">Import / restore vault</button></div><p class="hint">Restore validates the selected file before replacing your vault and preserves an encrypted recovery copy of the current file. Restore ends the current session and resets device unlock and the browser account index.</p><p id="backup-status" role="status"></p>`;
-  document.querySelector("#settings-panel")!.append(section);
+  section.innerHTML = `<div class="backup-copy"><h3>Backup &amp; restore</h3><p class="hint">Export an encrypted copy for backup or transfer to another PC. You will need the backup's master password.</p></div><div class="fill-actions"><button class="secondary" id="create-backup">${icon("upload")}Export encrypted vault</button><button class="secondary" id="restore-backup">${icon("download")}Import / restore vault</button></div><p class="hint">Import replaces this vault, locks it, and resets Windows Hello and locked account suggestions. An encrypted recovery copy is kept.</p><details class="privacy-disclosure"><summary>Keeping backups local</summary><p class="hint">Choose a folder outside cloud sync to keep the exported copy on this device. Windows Hello alone cannot open it on another PC.</p></details><p id="backup-status" role="status"></p>`;
+  document.querySelector("#desktop-settings-group")!.append(section);
   section.querySelector("#restore-backup")!.addEventListener("click", restoreBackup);
   section.querySelector<HTMLButtonElement>("#create-backup")!.addEventListener("click", async (event) => {
     if (backupBusy || !native || !status.unlocked) return;
@@ -446,13 +462,13 @@ function desktopSettings() {
   section.className = "desktop-settings";
   section.setAttribute("aria-labelledby", "desktop-settings-title");
   const disabled = !native || settingsError !== null;
-  const choices: [keyof AppSettings, string][] = [
-    ["startWithWindows", "Start with Windows"],
-    ["closeToTray", "Keep running in system tray when I close the window"],
-    ["startMinimized", "Open in system tray"],
+  const choices: [keyof AppSettings, string, string][] = [
+    ["startWithWindows", "Start with Windows", "Open Fakkarni automatically when Windows starts."],
+    ["closeToTray", "Keep running in system tray", "Closing the window keeps browser autofill available. Auto-lock still applies."],
+    ["startMinimized", "Open in system tray", "Start with the window hidden in the tray."],
   ];
-  section.innerHTML = `<h2 id="desktop-settings-title">Desktop preferences</h2><p class="hint">Keep Fakkarni running for Brave and Edge autofill. Auto-lock still applies in the tray; choose Lock vault to lock immediately.</p><div class="desktop-toggles">${choices.map(([key, label]) => `<label><input type="checkbox" name="${key}" ${appSettings[key] ? "checked" : ""} ${disabled ? "disabled" : ""}><span>${label}</span></label>`).join("")}</div><p class="hint" id="startup-hint" ${appSettings.startWithWindows ? "" : "hidden"}>Windows startup uses this app's current executable location. Keep it in place; this build has no installer.</p><p class="hint" id="desktop-settings-status" role="status">${esc(settingsError || (!native ? "Desktop preferences are available in the desktop app." : ""))}</p>`;
-  document.querySelector("#settings-panel")!.append(section);
+  section.innerHTML = `<h3 id="desktop-settings-title" class="visually-hidden">Desktop preferences</h3><div class="desktop-toggles">${choices.map(([key, label, description]) => `<label class="setting-toggle"><span class="setting-copy"><strong>${label}</strong><small>${description}</small></span><input type="checkbox" role="switch" class="switch" name="${key}" ${appSettings[key] ? "checked" : ""} ${disabled ? "disabled" : ""}></label>`).join("")}</div><p class="hint" id="startup-hint" ${appSettings.startWithWindows ? "" : "hidden"}>Startup uses this executable's current location. Keep it in place; this build has no installer.</p><p class="hint" id="desktop-settings-status" role="status">${esc(settingsError || (!native ? "Desktop preferences are available in the desktop app." : ""))}</p>`;
+  document.querySelector("#desktop-settings-group")!.append(section);
   section.querySelectorAll<HTMLInputElement>('input[type="checkbox"]').forEach((checkbox) => {
     checkbox.addEventListener("change", async () => {
       if (!native || !status.unlocked) return;
@@ -653,9 +669,21 @@ function editor(entry?: FullEntry) {
   const origin = document.activeElement as HTMLElement | null;
   const dialog = document.createElement("dialog");
   dialog.setAttribute("aria-label", entry ? "Edit login" : "New login");
-  dialog.innerHTML = `<form id="entry-form"><div class="modal-heading"><div><span class="eyebrow">YOUR PRIVATE VAULT</span><h2>${entry ? "Edit login" : "New login"}</h2></div><button type="button" id="cancel" class="text-button" aria-label="Close">✕</button></div><label>Title<input name="title" required maxlength="200" autocomplete="off"></label><label>Username<input name="username" autocomplete="off"></label><label>Website<input name="url" placeholder="https://example.com" autocomplete="off"></label>${entry ? `<div class="desktop-toggles"><label><input id="change-password" type="checkbox"><span>Change password</span></label></div><p class="hint" id="keep-password-hint">Your saved password will stay unchanged.</p>` : ""}<fieldset id="password-fields" class="password-editor" ${entry ? "disabled hidden" : ""}><label>${entry ? "New password" : "Password"}<div class="generator-row"><input name="password" type="password" required autocomplete="new-password"><button type="button" id="generate" class="secondary">Generate</button></div></label><label>Confirm password<input name="confirmPassword" type="password" required autocomplete="new-password"></label></fieldset><label>Notes<textarea name="notes" rows="3"></textarea></label><div id="modal-error" role="status"></div><button class="primary wide" id="save">Save login</button></form>`;
+  dialog.className = "entry-dialog";
+  dialog.innerHTML = `<form id="entry-form"><div class="modal-heading"><div class="editor-avatar">${accountAvatar(entry || {id: "", title: "New login", username: "", url: ""})}<div><h2>${entry ? "Edit login" : "New login"}</h2><p>${entry ? "Update the details for this login." : "Add a website or app to your vault."}</p></div></div><button type="button" id="cancel" class="icon-button" aria-label="Close">${icon("close")}</button></div><div class="editor-fields"><div class="form-row"><label class="field-name" for="entry-title">Title</label><div class="form-control"><input id="entry-title" name="title" required maxlength="200" autocomplete="off" placeholder="e.g. GitHub"></div></div><div class="form-row"><label class="field-name" for="entry-username">Username</label><div class="form-control"><input id="entry-username" name="username" autocomplete="off" placeholder="Username or email"></div></div><div class="form-row"><label class="field-name" for="entry-url">Website</label><div class="form-control"><input id="entry-url" name="url" placeholder="https://example.com" autocomplete="off"></div></div>${entry ? `<div class="password-summary"><span>${icon("key")}Password</span><span id="password-preserved" class="password-saved">Password saved</span><label class="secondary change-password-control"><input id="change-password" type="checkbox" aria-label="Change password"><span>Change password</span></label></div><p class="hint" id="keep-password-hint">Your saved password will stay unchanged.</p>` : ""}<fieldset id="password-fields" class="password-editor" ${entry ? "disabled hidden" : ""}><div class="form-row"><label class="field-name" for="entry-password">${entry ? "New password" : "Password"}</label><div class="form-control"><div class="generator-row">${passwordControl("entry-password", 'name="password" required autocomplete="new-password"', "password")}<button type="button" id="generate" class="secondary">${icon("refresh")}Generate</button></div></div></div><div class="form-row"><label class="field-name" for="entry-confirm">Confirm password</label><div class="form-control">${passwordControl("entry-confirm", 'name="confirmPassword" required autocomplete="new-password"', "password confirmation")}</div></div></fieldset><div class="form-row notes-row"><label class="field-name" for="entry-notes">Notes <small>(optional)</small></label><div class="form-control"><textarea id="entry-notes" name="notes" rows="3" placeholder="Add any notes about this login…"></textarea></div></div></div><div id="modal-error" role="status"></div><div class="modal-actions"><button type="button" id="cancel-editor" class="secondary">Cancel</button><button type="submit" class="primary" id="save">${entry ? "Save changes" : "Save login"}</button></div></form>`;
   app.append(dialog);
   const form = dialog.querySelector<HTMLFormElement>("form")!;
+  attachPasswordControls(form);
+  attachIconFallbacks(dialog);
+  form.addEventListener("input", event => {
+    const field = event.target as HTMLInputElement;
+    if (!["title", "url"].includes(field.name)) return;
+    const title = (form.elements.namedItem("title") as HTMLInputElement).value;
+    const url = (form.elements.namedItem("url") as HTMLInputElement).value;
+    const avatar = dialog.querySelector(".editor-avatar .avatar");
+    if (avatar) avatar.outerHTML = accountAvatar({ id: entry?.id || "", title, url, username: "" });
+    attachIconFallbacks(dialog.querySelector(".editor-avatar")!);
+  });
   if (entry)
     for (const key of [
       "title",
@@ -670,7 +698,14 @@ function editor(entry?: FullEntry) {
     passwordFields.disabled = !changing;
     passwordFields.hidden = !changing;
     form.querySelector<HTMLElement>("#keep-password-hint")!.hidden = changing;
-    passwordFields.querySelectorAll<HTMLInputElement>("input").forEach(field => { field.value = ""; });
+    passwordFields.querySelectorAll<HTMLInputElement>("input").forEach(field => { field.value = ""; field.type = "password"; });
+    passwordFields.querySelectorAll<HTMLButtonElement>("[data-password-toggle]").forEach(button => {
+      button.setAttribute("aria-pressed", "false");
+      button.setAttribute("aria-label", `Show ${button.dataset.passwordLabel}`);
+    });
+    form.querySelector("#password-preserved")!.textContent = changing ? "Replacing password" : "Password saved";
+    form.querySelector(".change-password-control > span")!.textContent = changing ? "Cancel change" : "Change password";
+    (event.currentTarget as HTMLInputElement).setAttribute("aria-label", changing ? "Cancel change" : "Change password");
     if (changing) passwordFields.querySelector<HTMLInputElement>("input")?.focus();
   });
   const close = () => {
@@ -679,6 +714,7 @@ function editor(entry?: FullEntry) {
     if (origin?.isConnected) origin.focus();
   };
   dialog.querySelector("#cancel")!.addEventListener("click", close);
+  dialog.querySelector("#cancel-editor")!.addEventListener("click", close);
   dialog.addEventListener("cancel", (event) => {
     event.preventDefault();
     close();
@@ -692,6 +728,11 @@ function editor(entry?: FullEntry) {
       if (generation === epoch && dialog.isConnected && !passwordFields.disabled) {
         (form.elements.namedItem("password") as HTMLInputElement).value = password;
         (form.elements.namedItem("confirmPassword") as HTMLInputElement).value = password;
+        passwordFields.querySelectorAll<HTMLInputElement>("input").forEach(field => { field.type = "password"; });
+        passwordFields.querySelectorAll<HTMLButtonElement>("[data-password-toggle]").forEach(button => {
+          button.setAttribute("aria-pressed", "false");
+          button.setAttribute("aria-label", `Show ${button.dataset.passwordLabel}`);
+        });
       }
     } catch (error) {
       if (generation === epoch && dialog.isConnected)

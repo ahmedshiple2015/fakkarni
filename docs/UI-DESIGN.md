@@ -4,6 +4,16 @@ Fakkarni implements the user-selected **Quiet** mockup: warm charcoal, a restrai
 
 The vault view contains search, saved logins, and account details. Settings has a separate navigation button for Windows Hello, tray/startup preferences, browser privacy, and encrypted backup/transfer. Leaving account details hides a revealed password and prevents a pending reveal response from putting it back into the hidden panel. Locking clears the interface and returns to the unlock screen. Settings navigation is unavailable while locked.
 
+## Soft precision forms and controls
+
+Unlock, New login, Edit login, Settings, and desktop controls implement the subsequently selected **Soft precision** mockup. The auth card separates Windows Hello from the master-password alternative. Password fields have explicit show/hide controls, accessible pressed states, and separate labels. New/edit dialogs use aligned label columns, optional notes, and right-aligned Cancel and Save actions. The editor header reflects the current title/site icon without requesting external artwork.
+
+Edit still receives no existing password. **Change password** explicitly enables replacement fields; cancelling the change clears those fields and returns them to masked mode. Generate fills both confirmation fields and returns them to masked mode. Ordinary saves continue using metadata-only serialization. Close, Cancel, and Escape reset the form and return focus to its trigger.
+
+Settings groups related controls under **Security & browser** and **Desktop & backup**. Native checkbox controls styled as switches retain keyboard operation and backend save/rollback handling. The browser switch is explicitly labelled **Show accounts while locked**; it does not disable autofill. The unencrypted account-index warning remains visible; supplemental explanations use expandable details. Import's replacement, lock, and Hello-reset behavior is stated alongside its actions.
+
+The executable, window/taskbar, and tray use the amber keyhole in `src-tauri/icons/icon.ico`. The source vector is `assets/app-icon.svg`; the ICO includes 16, 24, 32, 48, 64, 128, and 256px layers. `src-tauri/build.rs` declares icon dependencies so updates invalidate Tauri's cached Windows resource library. The built executable's raw PE resource was extracted and its 32px pixels matched the new ICO exactly.
+
 The extension makes account selection the main action, with a compact Fill affordance in each flat row. Refresh and connection state sit in its footer. Autofill still requires an account selection, validates the original browser page, and never submits a form. Passwords are never rendered in the popup, including masked placeholder passwords.
 
 ## Service icons and fallback
