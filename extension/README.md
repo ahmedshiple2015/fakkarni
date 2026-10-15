@@ -28,3 +28,5 @@ On Windows, scripts/register-brave.ps1 registers the host for the current user i
 ## Microsoft Edge
 
 The same unpacked extension also works in Edge. Run scripts/register-edge.ps1 to install its current-user native-host registration, then load the extension folder at edge://extensions with Developer mode enabled. Keep the desktop vault unlocked and click Refresh accounts. Remove the Edge registration with scripts/unregister-edge.ps1. The native manifest and host permit the same fixed extension ID; no additional origins or permissions are added.
+
+Revealed password inputs (`type="text"`) are supported when they retain an explicit current-password autocomplete hint or a recognized password name/ID. They are excluded from username selection, and their visible state is preserved. Arbitrary text inputs and ambiguous/password-confirmation forms remain unsupported.

@@ -20,7 +20,7 @@ function dom({passwords=1, usernames=1, newPassword=false, url="https://example.
   globalThis.HTMLInputElement=Input;
   globalThis.window={}; window.top=frame ? {} : window;
   globalThis.location=new URL(url);
-  globalThis.document={querySelectorAll:()=>secrets};
+  globalThis.document={querySelectorAll:()=>form.elements};
   globalThis.getComputedStyle=()=>({visibility:"visible",display:"block",opacity:"1"});
   return {users,secrets};
 }
@@ -38,6 +38,32 @@ test("rejects changed URL, iframes, signup and ambiguous fields without writing"
     for(const field of [...users,...secrets]) assert.equal(field.value,"");
   }
   dom(); assert.equal(fillLogin("https://example.com/other",location.origin,"alice","secret"),"page_changed");
+});
+test("fills a revealed password using stable password identifiers or autocomplete",()=>{
+  for (const mode of ["name", "id", "autocomplete"]) {
+    const {users,secrets}=dom();
+    secrets[0].type="text";
+    if(mode!=="name") secrets[0].name="";
+    if(mode==="id") secrets[0].id="loginPassword";
+    if(mode==="autocomplete") secrets[0].autocomplete="section-login current-password";
+    assert.equal(fillLogin(location.href,location.origin,"alice@example.test","distinct-secret"),"filled");
+    assert.equal(users[0].value,"alice@example.test");
+    assert.equal(secrets[0].value,"distinct-secret");
+    assert.equal(secrets[0].type,"text","preserve the site's reveal choice");
+  }
+});
+test("never guesses an unmarked text field or a revealed registration password",()=>{
+  for (const mode of ["unmarked", "password-hint", "signup", "confirm", "conflicting-hint", "ambiguous"]) {
+    const {users,secrets}=dom({passwords:mode==="ambiguous"?2:1});
+    secrets.forEach(field=>field.type="text");
+    if(mode==="unmarked") secrets[0].name="search";
+    if(mode==="password-hint") secrets[0].name="password_hint";
+    if(mode==="signup") secrets[0].autocomplete="section-signup new-password";
+    if(mode==="confirm") secrets[0].name="confirmPassword";
+    if(mode==="conflicting-hint") secrets[0].autocomplete="username";
+    assert.notEqual(fillLogin(location.href,location.origin,"alice","secret"),"filled");
+    for (const field of [...users,...secrets]) assert.equal(field.value,"");
+  }
 });
 test("ignores hidden, readonly or disabled password controls and refuses unowned fields",()=>{
   for(const property of ["hidden","disabled","readOnly"]) {

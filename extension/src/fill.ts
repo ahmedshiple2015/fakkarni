@@ -14,15 +14,30 @@ export function fillLogin(expectedUrl: string, expectedOrigin: string, username:
       style.visibility === "visible" && style.display !== "none" &&
       bounds.width > 0 && bounds.height > 0 && input.getClientRects().length > 0;
   };
-  const fields = Array.from(document.querySelectorAll<HTMLInputElement>('input[type="password"]')).filter(writable);
+  const tokens = (input: HTMLInputElement) => input.autocomplete.toLowerCase().split(/\s+/);
+  const identifiers = (input: HTMLInputElement) => [input.name, input.id]
+    .map(value => value.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase());
+  const passwordField = (input: HTMLInputElement) => {
+    if (input.type === "password") return true;
+    if (input.type !== "text") return false;
+    const hints = tokens(input);
+    if (hints.some(hint => ["username", "email", "one-time-code"].includes(hint))) return false;
+    // Reveal controls commonly switch the same input to text. Require explicit
+    // password semantics; never treat an arbitrary visible text field as a secret.
+    return hints.includes("current-password") || hints.includes("new-password") ||
+      identifiers(input).some(value => /^(?:(?:login|current|account|user|new|confirm|repeat|retype)[^a-z0-9]+)?(?:password|passwd|pwd)$/.test(value));
+  };
+  const fields = Array.from(document.querySelectorAll<HTMLInputElement>("input")).filter(input => passwordField(input) && writable(input));
   // Never guess between a login, password change, or sign-up form.
   if (fields.length !== 1) return "ambiguous_form";
   const secret = fields[0];
-  if (secret.autocomplete.split(/\s+/).includes("new-password")) return "ambiguous_form";
+  if (tokens(secret).includes("new-password") || identifiers(secret).some(value =>
+    /(?:^|[^a-z0-9])(?:new|confirm|repeat|retype)[^a-z0-9]*(?:password|passwd|pwd)(?:$|[^a-z0-9])/.test(value))) return "ambiguous_form";
   const form = secret.form;
   if (!form) return "unsupported_form";
   const candidates = Array.from(form.elements).filter((item): item is HTMLInputElement =>
-    item instanceof HTMLInputElement && ["text", "email", "tel"].includes(item.type) && writable(item));
+    item instanceof HTMLInputElement && item !== secret && !passwordField(item) &&
+      ["text", "email", "tel"].includes(item.type) && writable(item));
   const named = candidates.filter(item => item.autocomplete.split(/\s+/).includes("username"));
   const likely = candidates.filter(item => item.type === "email" || /^(user(name)?|email|login)([_-]?(name|id|email))?$/i.test(item.name || item.id));
   const choices = named.length ? named : likely.length ? likely : candidates;
