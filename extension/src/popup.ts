@@ -101,7 +101,7 @@ async function load() {
       );
       return;
     }
-    setState(response.status === "locked" ? "Vault locked. Choose an account to open Fakkarni, unlock, and approve filling." :
+    setState(response.status === "locked" ? "Vault locked. Choose an account to open Fakkarni and unlock, then this page fills automatically." :
       response.matches.length
         ? `${response.matches.length} matching ${response.matches.length === 1 ? "account" : "accounts"}`
         : "No saved accounts match this site. Add a login in the desktop app.",
@@ -131,9 +131,17 @@ async function load() {
           const result = await api.runtime.sendMessage({action: "fill_account", tabId: tab.id, url: tab.url, id: match.id});
           if (current !== generation) return;
           setState(result && typeof result === "object" && "ok" in result && result.ok === true
-            ? "Continue in Fakkarni: unlock if needed, then approve this account. Filling continues when this popup closes."
+            ? "Filling this account. Unlock Fakkarni if needed; filling continues when this popup closes."
             : "The page changed or filling could not start. Refresh and try again.");
-        } catch { if (current === generation) setState("Unable to start filling. Reload the extension and retry."); }
+        } catch (error) {
+          if (current !== generation) return;
+          const message = error instanceof Error ? error.message : "";
+          if (/message (port|channel) closed|before a response|asynchronous response/i.test(message))
+            setState("The popup closed during handoff. Check whether the form filled, then reopen this popup to retry if needed. (HANDOFF_CLOSED)");
+          else if (/receiving end does not exist|could not establish connection|context invalidated/i.test(message))
+            setState("The extension background connection is unavailable. Reload Fakkarni at the browser’s extensions page. (WORKER_UNAVAILABLE)");
+          else setState("The browser could not send the fill request. Reopen this popup and retry. (REQUEST_FAILED)");
+        }
         finally { if (current === generation) button.disabled = false; }
       });
       row.append(button);

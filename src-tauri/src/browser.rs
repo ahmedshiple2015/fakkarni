@@ -49,6 +49,7 @@ struct Pending {
 struct Inner {
     index: Index,
     pending: Option<Pending>,
+    used_request_ids: Vec<(String, Instant)>,
 }
 pub struct BrowserState {
     inner: Mutex<Inner>,
@@ -61,11 +62,15 @@ impl BrowserState {
             inner: Mutex::new(Inner {
                 index,
                 pending: None,
+                used_request_ids: Vec::new(),
             }),
             path,
         }
     }
     fn expire(inner: &mut Inner) {
+        inner
+            .used_request_ids
+            .retain(|(_, started)| started.elapsed() < LIFETIME);
         if inner
             .pending
             .as_ref()
@@ -80,6 +85,24 @@ impl BrowserState {
             if inner.pending.as_ref().is_some_and(|p| p.ready.is_some()) {
                 inner.pending = None;
             }
+        }
+    }
+    /// The extension account click authorizes this exact pending request. Unlocking
+    /// resumes it automatically; no additional desktop approval prompt is shown.
+    pub fn complete_after_unlock(&self, vault: &SharedState) {
+        let request_id = {
+            let Ok(mut inner) = self.inner.try_lock() else {
+                return;
+            };
+            Self::expire(&mut inner);
+            inner
+                .pending
+                .as_ref()
+                .filter(|p| p.ready.is_none())
+                .map(|p| p.info.request_id.clone())
+        };
+        if let Some(request_id) = request_id {
+            let _ = prepare(self, vault, &request_id);
         }
     }
     pub fn refresh(&self, vault: &mut fakkarni_vault::Vault) {
@@ -228,6 +251,20 @@ fn matches(vault: &SharedState, state: &BrowserState, origin: &str) -> Response 
         credential: None,
     }
 }
+fn focus_if_waiting(state: &BrowserState, app: Option<&tauri::AppHandle>) {
+    let waiting = state
+        .inner
+        .try_lock()
+        .ok()
+        .is_some_and(|inner| inner.pending.as_ref().is_some_and(|p| p.ready.is_none()));
+    if waiting {
+        if let Some(app) = app {
+            crate::lifecycle::show_main(app);
+            let _ = app.emit("browser-fill-request", ());
+        }
+    }
+}
+
 pub fn handle(
     vault: &SharedState,
     state: &BrowserState,
@@ -258,17 +295,33 @@ pub fn handle(
             };
             BrowserState::expire(&mut inner);
             if let Some(p) = inner.pending.as_ref() {
-                return Response::empty(
-                    if p.info.request_id == request_id
-                        && p.info.origin == origin
-                        && p.entry_id == id
-                    {
-                        Status::Pending
-                    } else {
-                        Status::Unavailable
-                    },
-                );
+                let same =
+                    p.info.request_id == request_id && p.info.origin == origin && p.entry_id == id;
+                let waiting = p.ready.is_none();
+                drop(inner);
+                if same && waiting {
+                    state.complete_after_unlock(vault);
+                    focus_if_waiting(state, app);
+                }
+                return Response::empty(if same {
+                    Status::Pending
+                } else {
+                    Status::Unavailable
+                });
             }
+            if inner
+                .used_request_ids
+                .iter()
+                .any(|(used, _)| used == &request_id)
+            {
+                return Response::empty(Status::Cancelled);
+            }
+            if inner.used_request_ids.len() >= 128 {
+                return Response::empty(Status::Unavailable);
+            }
+            inner
+                .used_request_ids
+                .push((request_id.clone(), Instant::now()));
             inner.pending = Some(Pending {
                 info: PendingInfo {
                     request_id,
@@ -281,10 +334,8 @@ pub fn handle(
                 ready: None,
             });
             drop(inner);
-            if let Some(app) = app {
-                crate::lifecycle::show_main(app);
-                let _ = app.emit("browser-fill-request", ());
-            }
+            state.complete_after_unlock(vault);
+            focus_if_waiting(state, app);
             Response::empty(Status::Pending)
         }
         Request::CancelFill {
@@ -420,19 +471,11 @@ pub fn reject_browser_fill(
     }
     Ok(())
 }
-#[tauri::command]
-pub fn approve_browser_fill(
-    state: State<'_, Arc<BrowserState>>,
-    vault: State<'_, Shared>,
-    request_id: String,
-) -> Result<(), String> {
-    approve(&state, &vault, &request_id)
-}
-fn approve(state: &BrowserState, vault: &SharedState, request_id: &str) -> Result<(), String> {
+fn prepare(state: &BrowserState, vault: &SharedState, request_id: &str) -> Result<(), String> {
     let (id, origin) = {
         let mut inner = state
             .inner
-            .lock()
+            .try_lock()
             .map_err(|_| "Browser request unavailable.")?;
         BrowserState::expire(&mut inner);
         let p = inner
@@ -443,22 +486,28 @@ fn approve(state: &BrowserState, vault: &SharedState, request_id: &str) -> Resul
         (p.entry_id.clone(), p.info.origin.clone())
     };
     let epoch = vault.epoch.load(Ordering::SeqCst);
-    let credential = crate::run_operation(vault, epoch, |v| {
-        let entry = v
-            .matches(&origin)
-            .map_err(|e| e.to_string())?
-            .into_iter()
-            .find(|e| e.id == id)
-            .ok_or("The account no longer matches this site.")?;
-        let password = v.reveal(&id).map_err(|e| e.to_string())?;
-        Ok(Credential {
-            username: entry.username,
-            password,
-        })
-    })?;
+    if vault.blocked() {
+        return Err("Windows is locked.".into());
+    }
+    let mut guard = vault.inner.try_lock().map_err(|_| "Vault is busy.")?;
+    if guard.epoch != epoch {
+        guard.vault.lock();
+        guard.epoch = epoch;
+    }
+    let entry = guard
+        .vault
+        .matches(&origin)
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .find(|e| e.id == id)
+        .ok_or("The account no longer matches this site.")?;
+    let credential = Credential {
+        username: entry.username,
+        password: guard.vault.reveal(&id).map_err(|e| e.to_string())?,
+    };
     let mut inner = state
         .inner
-        .lock()
+        .try_lock()
         .map_err(|_| "Browser request unavailable.")?;
     BrowserState::expire(&mut inner);
     if vault.blocked() || vault.epoch.load(Ordering::SeqCst) != epoch {
@@ -532,7 +581,7 @@ mod tests {
         )
     }
     #[test]
-    fn fill_needs_approval_exact_origin_and_is_single_use() {
+    fn unlocked_fill_is_automatic_exact_origin_single_use_and_replay_safe() {
         let (_dir, vault, state, id) = fixture();
         let token = "0123456789abcdef0123456789abcdef";
         assert_eq!(
@@ -540,14 +589,10 @@ mod tests {
             Status::Error
         );
         assert_eq!(begin(&vault, &state, &id, token).status, Status::Pending);
-        assert_eq!(
-            poll(&vault, &state, "https://example.test", token).status,
-            Status::Pending
-        );
+        assert_eq!(begin(&vault, &state, &id, token).status, Status::Pending);
         assert!(poll(&vault, &state, "https://evil.test", token)
             .credential
             .is_none());
-        approve(&state, &vault, token).unwrap();
         assert!(poll(&vault, &state, "https://evil.test", token)
             .credential
             .is_none());
@@ -557,13 +602,13 @@ mod tests {
             poll(&vault, &state, "https://example.test", token).status,
             Status::Cancelled
         );
+        assert_eq!(begin(&vault, &state, &id, token).status, Status::Cancelled);
     }
     #[test]
-    fn lock_cancel_and_expiry_revoke_approved_delivery() {
+    fn lock_cancel_and_expiry_revoke_automatic_delivery() {
         let (_dir, vault, state, id) = fixture();
         let token = "0123456789abcdef0123456789abcdef";
         begin(&vault, &state, &id, token);
-        approve(&state, &vault, token).unwrap();
         vault.revoke();
         assert!(poll(&vault, &state, "https://example.test", token)
             .credential
@@ -576,6 +621,7 @@ mod tests {
             .vault
             .unlock("Synthetic test master password")
             .unwrap();
+        let token = "1123456789abcdef0123456789abcdef";
         begin(&vault, &state, &id, token);
         handle(
             &vault,
@@ -587,7 +633,11 @@ mod tests {
                 request_id: token.into(),
             },
         );
-        assert!(approve(&state, &vault, token).is_err());
+        state.complete_after_unlock(&vault);
+        assert!(poll(&vault, &state, "https://example.test", token)
+            .credential
+            .is_none());
+        let token = "2123456789abcdef0123456789abcdef";
         begin(&vault, &state, &id, token);
         state
             .inner
@@ -597,7 +647,10 @@ mod tests {
             .as_mut()
             .unwrap()
             .started = Instant::now() - LIFETIME;
-        assert!(approve(&state, &vault, token).is_err());
+        state.complete_after_unlock(&vault);
+        assert!(poll(&vault, &state, "https://example.test", token)
+            .credential
+            .is_none());
     }
     #[test]
     fn locked_index_opt_in_stores_only_bounded_account_metadata() {
@@ -642,7 +695,26 @@ mod tests {
         assert_eq!(matches.status, Status::Locked);
         assert_eq!(matches.matches.len(), 1);
         assert_eq!(begin(&vault, &state, &id, token).status, Status::Pending);
-        assert!(approve(&state, &vault, token).is_err());
+        state.complete_after_unlock(&vault);
+        assert_eq!(
+            poll(&vault, &state, "https://example.test", token).status,
+            Status::Pending
+        );
+        vault
+            .inner
+            .lock()
+            .unwrap()
+            .vault
+            .unlock("Synthetic test master password")
+            .unwrap();
+        state.complete_after_unlock(&vault);
+        assert_eq!(
+            poll(&vault, &state, "https://example.test", token)
+                .credential
+                .unwrap()
+                .password,
+            "synthetic-secret"
+        );
         let mut bytes = text.into_bytes();
         bytes.extend(vec![b' '; MAX_INDEX_BYTES as usize]);
         fs::write(dir.path().join("index.json"), bytes).unwrap();

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {fillLogin} from "../dist/fill.js";
-import {createCoordinator} from "../dist/background.js";
+import {createCoordinator, installWorker} from "../dist/background.js";
 
 function dom({passwords=1, usernames=1, newPassword=false, url="https://example.com/login", frame=false}={}) {
   class Input {
@@ -68,7 +68,7 @@ function fixture({pollStatus="ok", changed=false, badCredential=false, beginCred
     }},
   };
   const coordinator=createCoordinator(api,async()=>{if(changed) {tab={...tab,url:"https://example.com/changed"}; coordinator.invalidate(3);}});
-  return {coordinator,calls,injections,badges,done};
+  return {coordinator,api,calls,injections,badges,done};
 }
 const message={action:"fill_account",id:"entry-id",tabId:3,url:"https://example.com/login"};
 test("background polls approval after popup handoff and injects only the original document",async()=>{
@@ -90,4 +90,52 @@ test("background rejects page-supplied origin and changed or non-HTTPS active ta
   for(const bad of [{...message,tabId:7},{...message,url:"https://phishing.example/login"},{...message,id:""}])
     assert.deepEqual(await f.coordinator.start(bad),{ok:false});
   assert.equal(f.calls.length,0);
+});
+
+const settle = () => new Promise(resolve => setImmediate(resolve));
+test("two consecutive fills on the same URL use fresh requests and captured documents",async()=>{
+  const f=fixture();
+  assert.deepEqual(await f.coordinator.start(message),{ok:true});
+  await f.done; await settle();
+  assert.deepEqual(await f.coordinator.start(message),{ok:true});
+  for(let i=0;i<10 && f.injections.length<2;i++) await settle();
+  assert.equal(f.injections.length,2);
+  const begins=f.calls.filter(call=>call.action==="begin_fill");
+  assert.equal(begins.length,2);
+  assert.notEqual(begins[0].request_id,begins[1].request_id);
+  for(const injection of f.injections) assert.deepEqual(injection.target.documentIds,["initial-document"]);
+});
+test("a failed fill releases pending state and allows retry without reloading",async()=>{
+  const f=fixture({badCredential:true});
+  const native=f.api.runtime.sendNativeMessage;
+  let recovered=false;
+  f.api.runtime.sendNativeMessage=async(host,request)=> request.action==="poll_fill" && recovered
+    ? {version:1,status:"ok",matches:[],credential:{username:"alice",password:"secret"}}
+    : native(host,request);
+  await f.coordinator.start(message); await f.done; await settle();
+  assert.equal(f.injections.length,0);
+  recovered=true;
+  await f.coordinator.start(message);
+  for(let i=0;i<10 && !f.injections.length;i++) await settle();
+  assert.equal(f.injections.length,1);
+});
+test("worker responds synchronously before starting either native handoff, including after restart",async()=>{
+  for(let restart=0;restart<2;restart++) {
+    const f=fixture();
+    let listener;
+    f.api.runtime.id="extension-id";
+    f.api.runtime.getURL=path=>`chrome-extension://extension-id/${path}`;
+    f.api.runtime.onMessage={addListener:callback=>{listener=callback;}};
+    f.api.tabs.onUpdated={addListener:()=>{}};
+    f.api.tabs.onRemoved={addListener:()=>{}};
+    installWorker(f.api);
+    let response;
+    const keepAlive=listener(message,{id:"extension-id",url:f.api.runtime.getURL("popup.html")},value=>response=value);
+    assert.equal(keepAlive,false);
+    assert.deepEqual(response,{ok:true});
+    assert.equal(f.calls.length,0,"native focus must not precede the message response");
+    // This worker uses the real short delay; await a completion badge.
+    await f.done;
+    assert.equal(f.injections.length,1);
+  }
 });

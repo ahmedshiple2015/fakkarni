@@ -45,7 +45,7 @@ export function createCoordinator(api: Api, wait = (ms: number) => new Promise<v
     try {
       const begun = validateResponse(await api.runtime.sendNativeMessage(host, {version: 1, action: "begin_fill", origin: task.origin, id, request_id: task.requestId}));
       if (!begun || begun.status !== "pending") throw new Error("request_failed");
-      await indicator(task, "…", "Fakkarni: unlock and approve in the desktop app");
+      await indicator(task, "…", "Fakkarni: filling; unlock the desktop vault if needed");
       const deadline = Date.now() + 120000;
       while (Date.now() < deadline && await current(task)) {
         await wait(500);
@@ -106,14 +106,40 @@ export function createCoordinator(api: Api, wait = (ms: number) => new Promise<v
   };
 }
 
-if (typeof chrome !== "undefined") {
-  const api = chrome;
+/** Acknowledge before native handoff can focus the desktop and close the popup. */
+export function installWorker(api: Api) {
   const coordinator = createCoordinator(api);
   api.tabs.onUpdated.addListener((id, change) => { if (change.url !== undefined || change.status === "loading") coordinator.invalidate(id); });
   api.tabs.onRemoved.addListener(id => coordinator.invalidate(id));
   api.runtime.onMessage.addListener((message, sender, respond) => {
     if (sender.id !== api.runtime.id || sender.url !== api.runtime.getURL("popup.html")) return false;
-    void coordinator.start(message).then(respond, () => respond({ok: false}));
-    return true;
+    if (!isRecord(message) || message.action !== "fill_account" || typeof message.tabId !== "number") {
+      respond({ok: false});
+      return false;
+    }
+    // Returning true and answering after async calls races popup destruction on
+    // app focus. This message confirms queueing only; completion uses the badge.
+    respond({ok: true});
+    const tabId = message.tabId;
+    void coordinator.start(message).then(async result => {
+      if (!result.ok) {
+        try {
+          await api.action.setBadgeText({tabId, text: "!"});
+          await api.action.setTitle({tabId, title: "Fakkarni: page changed; reopen the extension and choose the account again. (PAGE_CHANGED)"});
+        } catch { /* Tab no longer exists. */ }
+      }
+    }, async error => {
+      const detail = error instanceof Error ? error.message : "";
+      const denied = /permission|cannot access|extensions gallery|not allowed/i.test(detail);
+      try {
+        await api.action.setBadgeText({tabId, text: "!"});
+        await api.action.setTitle({tabId, title: denied
+          ? "Fakkarni: reopen the extension on this website to grant filling access. (PAGE_ACCESS_DENIED)"
+          : "Fakkarni: filling could not start. Reopen the extension and retry. (START_FAILED)"});
+      } catch { /* Tab no longer exists. */ }
+    });
+    return false;
   });
 }
+
+if (typeof chrome !== "undefined") installWorker(chrome);

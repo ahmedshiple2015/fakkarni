@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Fakkarni — فكرني",
-  "description": "Fill a matching local Fakkarni account after approving it in the desktop app. No cloud or tracking.",
+  "description": "Choose a local Fakkarni account to fill, unlocking the desktop vault if needed. No cloud or tracking.",
   "version": "0.2.0",
   "permissions": ["activeTab", "nativeMessaging", "scripting"],
   "background": {"service_worker": "dist/background.js", "type": "module"},

@@ -244,36 +244,19 @@ function renderBrowserFill() {
   const panel = document.createElement("section");
   panel.id = "browser-fill";
   panel.className = "browser-fill";
-  panel.setAttribute("aria-label", "Browser autofill approval");
-  panel.innerHTML = `<span class="eyebrow">BROWSER AUTOFILL REQUEST</span><h2>${esc(request.title || "Saved account")}</h2><p class="fill-origin">${esc(request.origin)}</p><p>${esc(request.username || "No username")}</p><p class="hint">${status.unlocked ? "Approve only if you just selected this account in your browser. This shares the password once with the requesting extension, which checks the original tab before filling. It will not submit the form." : "Unlock below, then approve this account for the site shown here. Unlocking alone does not share your password."}</p><div class="fill-actions"><button class="secondary" id="reject-browser-fill">Cancel request</button><button class="primary" id="approve-browser-fill" ${status.unlocked ? "" : "disabled"}>Approve and fill</button></div><p id="browser-fill-status" role="status"></p>`;
+  panel.setAttribute("aria-label", "Browser autofill request");
+  panel.innerHTML = `<span class="eyebrow">BROWSER AUTOFILL REQUEST</span><h2>${esc(request.title || "Saved account")}</h2><p class="fill-origin">${esc(request.origin)}</p><p>${esc(request.username || "No username")}</p><p class="hint">${status.unlocked ? "Filling the selected account in your original browser tab…" : "Unlock below with your master password or Windows Hello. The selected account will fill automatically in the original browser tab. No form will be submitted."}</p><button class="secondary" id="reject-browser-fill">Cancel fill</button>`;
   document.querySelector("main .topbar")?.after(panel);
   panel.querySelector("#reject-browser-fill")!.addEventListener("click", async () => {
     await invoke("reject_browser_fill", { requestId: request.requestId }).catch(() => {});
     await refreshBrowserFill();
-  });
-  panel.querySelector<HTMLButtonElement>("#approve-browser-fill")!.addEventListener("click", async (event) => {
-    const button = event.currentTarget as HTMLButtonElement;
-    const generation = epoch;
-    button.disabled = true;
-    try {
-      await invoke("approve_browser_fill", { requestId: request.requestId });
-      if (generation !== epoch) return;
-      pendingFill = null;
-      panel.remove();
-      message("Approved for the requesting browser tab. The extension will fill it if that page is still unchanged.");
-    } catch (error) {
-      if (generation === epoch && panel.isConnected) {
-        panel.querySelector("#browser-fill-status")!.textContent = String(error);
-        button.disabled = !status.unlocked;
-      }
-    }
   });
 }
 function browserPreferences() {
   const section = document.createElement("section");
   section.className = "desktop-settings";
   section.setAttribute("aria-label", "Browser privacy settings");
-  section.innerHTML = `<h3>Browser autofill</h3><p class="hint">Select an account in Brave or Edge to bring Fakkarni forward. Unlock if needed, then approve the site and account before filling. Autofill never submits a form.</p><div class="desktop-toggles"><label><input type="checkbox" id="locked-suggestions" ${browserSettings.showAccountsWhenLocked ? "checked" : ""} ${browserSettingsError ? "disabled" : ""}><span>Show saved accounts in the browser while my vault is locked</span></label></div><p class="hint">When enabled, account names, usernames, and website origins are stored in a separate unencrypted file on this PC, so they remain visible while locked and to programs running as your Windows user. Passwords and notes stay encrypted. Turning this off removes the local index.</p><p id="browser-preferences-status" class="hint" role="status">${esc(browserSettingsError || "")}</p>`;
+  section.innerHTML = `<h3>Browser autofill</h3><p class="hint">Select an account in Brave or Edge to fill it immediately when unlocked. If locked, Fakkarni comes forward and fills after you unlock. Autofill never submits a form.</p><div class="desktop-toggles"><label><input type="checkbox" id="locked-suggestions" ${browserSettings.showAccountsWhenLocked ? "checked" : ""} ${browserSettingsError ? "disabled" : ""}><span>Show saved accounts in the browser while my vault is locked</span></label></div><p class="hint">When enabled, account names, usernames, and website origins are stored in a separate unencrypted file on this PC, so they remain visible while locked and to programs running as your Windows user. Passwords and notes stay encrypted. Turning this off removes the local index.</p><p id="browser-preferences-status" class="hint" role="status">${esc(browserSettingsError || "")}</p>`;
   document.querySelector("footer")!.before(section);
   const checkbox = section.querySelector<HTMLInputElement>("#locked-suggestions")!;
   checkbox.addEventListener("change", async () => {
@@ -285,7 +268,7 @@ function browserPreferences() {
       await invoke("set_browser_settings", { settings });
       if (generation !== epoch || !section.isConnected) return;
       browserSettings = settings;
-      feedback.textContent = settings.showAccountsWhenLocked ? "Local account index enabled. Passwords still require vault unlock and approval." : "Locked account index removed.";
+      feedback.textContent = settings.showAccountsWhenLocked ? "Local account index enabled. Passwords still require vault unlock." : "Locked account index removed.";
     } catch (error) {
       if (generation !== epoch || !section.isConnected) return;
       checkbox.checked = browserSettings.showAccountsWhenLocked;

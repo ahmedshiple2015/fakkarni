@@ -340,6 +340,7 @@ fn main() {
                         }
                         previously_unlocked = unlocked;
                     }
+                    browser_state.complete_after_unlock(&vault);
                 }
             });
             lifecycle::init(app)?;
@@ -361,7 +362,6 @@ fn main() {
             hello::unlock_hello,
             hello::disable_hello,
             browser::browser_pending,
-            browser::approve_browser_fill,
             browser::reject_browser_fill,
             browser::browser_settings,
             browser::set_browser_settings,
