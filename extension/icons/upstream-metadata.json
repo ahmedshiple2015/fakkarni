@@ -1,0 +1,117 @@
+[
+  {
+    "title": "Bitwarden",
+    "hex": "175DDC",
+    "source": "https://bitwarden.com/brand",
+    "guidelines": "https://bitwarden.com/brand"
+  },
+  {
+    "title": "Discord",
+    "hex": "5865F2",
+    "source": "https://discord.com/branding",
+    "guidelines": "https://discord.com/branding"
+  },
+  {
+    "title": "Dropbox",
+    "hex": "0061FF",
+    "source": "https://www.dropbox.com/branding"
+  },
+  {
+    "title": "Epic Games",
+    "hex": "313131",
+    "source": "https://dev.epicgames.com/docs/services/en-US/EpicAccountServices/DesignGuidelines/index.html#epicgamesbrandguidelines",
+    "guidelines": "https://dev.epicgames.com/docs/services/en-US/EpicAccountServices/DesignGuidelines/index.html#epicgamesbrandguidelines"
+  },
+  {
+    "title": "Facebook",
+    "hex": "0866FF",
+    "source": "https://about.meta.com/brand/resources/facebook/logo",
+    "guidelines": "https://about.meta.com/brand/resources/facebook/logo"
+  },
+  {
+    "title": "GitHub",
+    "hex": "181717",
+    "source": "https://github.com/logos",
+    "guidelines": "https://github.com/logos"
+  },
+  {
+    "title": "GitLab",
+    "hex": "FC6D26",
+    "source": "https://about.gitlab.com/press/press-kit/",
+    "guidelines": "https://about.gitlab.com/handbook/marketing/corporate-marketing/brand-activation/trademark-guidelines/"
+  },
+  {
+    "title": "Google",
+    "hex": "4285F4",
+    "source": "https://partnermarketinghub.withgoogle.com",
+    "guidelines": "https://about.google/brand-resource-center/brand-elements/",
+    "aliases": {
+      "loc": {
+        "ko-KR": "구글"
+      }
+    }
+  },
+  {
+    "title": "Instagram",
+    "hex": "FF0069",
+    "source": "https://about.meta.com/brand/resources/instagram",
+    "guidelines": "https://about.meta.com/brand/resources/instagram"
+  },
+  {
+    "title": "Netflix",
+    "hex": "E50914",
+    "source": "https://brand.netflix.com/en/assets/logos",
+    "guidelines": "https://brand.netflix.com/en/assets/logos"
+  },
+  {
+    "title": "Proton",
+    "hex": "6D4AFF",
+    "source": "https://proton.me/media/kit"
+  },
+  {
+    "title": "Reddit",
+    "hex": "FF4500",
+    "source": "https://www.redditinc.com/brand",
+    "guidelines": "https://www.redditinc.com/brand"
+  },
+  {
+    "title": "Riot Games",
+    "hex": "EB0029",
+    "source": "https://www.riotgames.com/en/press"
+  },
+  {
+    "title": "Spotify",
+    "hex": "1ED760",
+    "source": "https://developer.spotify.com/documentation/general/design-and-branding/#using-our-logo",
+    "guidelines": "https://developer.spotify.com/documentation/general/design-and-branding/#using-our-logo"
+  },
+  {
+    "title": "Steam",
+    "hex": "000000",
+    "source": "https://partner.steamgames.com/doc/marketing/branding",
+    "guidelines": "https://partner.steamgames.com/doc/marketing/branding"
+  },
+  {
+    "title": "Telegram",
+    "hex": "26A5E4",
+    "source": "https://telegram.org/tour/screenshots"
+  },
+  {
+    "title": "Twitch",
+    "hex": "9146FF",
+    "source": "https://brand.twitch.tv",
+    "guidelines": "https://brand.twitch.tv"
+  },
+  {
+    "title": "WhatsApp",
+    "hex": "25D366",
+    "source": "https://about.meta.com/brand/resources/whatsapp/whatsapp-brand",
+    "guidelines": "https://about.meta.com/brand/resources/whatsapp/whatsapp-brand"
+  },
+  {
+    "title": "YouTube",
+    "hex": "FF0000",
+    "source": "https://www.youtube.com/howyoutubeworks/resources/brand-resources/#logos-icons-and-colors",
+    "guidelines": "https://www.youtube.com/howyoutubeworks/resources/brand-resources/#logos-icons-and-colors"
+  }
+]
