@@ -9,6 +9,7 @@
     "build": "tsc --noEmit && vite build",
     "build:extension": "tsc -p extension/tsconfig.json",
     "test:extension": "node extension/build.mjs && node --test extension/tests/*.test.mjs",
+    "test:desktop": "node --test tests/*.test.mjs",
     "build:bridge": "cargo build -p fakkarni-native-host",
     "desktop": "tauri dev",
     "desktop:build": "tauri build --no-bundle"

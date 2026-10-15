@@ -240,7 +240,10 @@ async fn list_entries(state: State<'_, Shared>) -> Result<Vec<EntrySummary>, Str
 #[tauri::command]
 async fn edit_entry(state: State<'_, Shared>, id: String) -> Result<EntryInput, String> {
     operation(state.inner().clone(), move |v| {
-        v.edit(&id).map_err(|e| e.to_string())
+        let mut input = v.edit(&id).map_err(|e| e.to_string())?;
+        use zeroize::Zeroize;
+        input.password.zeroize();
+        Ok(input)
     })
     .await
 }
@@ -254,9 +257,15 @@ async fn reveal_password(state: State<'_, Shared>, id: String) -> Result<String,
 }
 
 #[tauri::command]
-async fn save_entry(state: State<'_, Shared>, input: EntryInput) -> Result<String, String> {
+async fn save_entry(
+    state: State<'_, Shared>,
+    input: EntryInput,
+    replace_password: Option<bool>,
+) -> Result<String, String> {
+    let replace_password = replace_password.unwrap_or(input.id.is_none());
     operation(state.inner().clone(), move |v| {
-        v.save_entry(&input).map_err(|e| e.to_string())
+        v.save_entry_with_password_update(&input, replace_password)
+            .map_err(|e| e.to_string())
     })
     .await
 }

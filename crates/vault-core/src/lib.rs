@@ -279,7 +279,21 @@ impl Vault {
     }
 
     pub fn save_entry(&mut self, input: &EntryInput) -> Result<String> {
+        self.save_entry_with_password_update(input, true)
+    }
+
+    /// Metadata edits preserve the stored password unless replacement is explicit.
+    /// Ignored frontend password fields are never copied over the protected value.
+    pub fn save_entry_with_password_update(
+        &mut self,
+        input: &EntryInput,
+        replace_password: bool,
+    ) -> Result<String> {
         validate(input)?;
+        let update_password = input.id.is_none() || replace_password;
+        if update_password && input.password.is_empty() {
+            return Err(VaultError::Invalid("Enter a password for this login."));
+        }
         let path = self.path.clone();
         let session = self.active()?;
         // Commit the in-memory change only after the encrypted file is safely replaced.
@@ -296,7 +310,9 @@ impl Vault {
             entry.set_protected(fields::TITLE, input.title.trim());
             entry.set_protected(fields::USERNAME, input.username.as_str());
             entry.set_protected(fields::URL, input.url.trim());
-            entry.set_protected(fields::PASSWORD, input.password.as_str());
+            if update_password {
+                entry.set_protected(fields::PASSWORD, input.password.as_str());
+            }
             entry.set_protected(fields::NOTES, input.notes.as_str());
         }
         let fingerprint = persist(&path, &next, &session.key, Some(session.fingerprint))?;

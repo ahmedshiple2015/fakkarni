@@ -607,3 +607,4 @@ textarea {
 .browser-fill h2 { margin: 10px 0; }
 .browser-fill .fill-origin { color: #d2b5ff; font-size: 18px; overflow-wrap: anywhere; }
 .fill-actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 18px; }
+.password-editor { border: 0; padding: 0; margin: 0; min-width: 0; }

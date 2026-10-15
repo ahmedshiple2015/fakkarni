@@ -1,6 +1,7 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import "./style.css";
+import { entryFormPayload } from "./entry-form";
 
 type Status = {
   exists: boolean;
@@ -454,7 +455,7 @@ function editor(entry?: FullEntry) {
   const origin = document.activeElement as HTMLElement | null;
   const dialog = document.createElement("dialog");
   dialog.setAttribute("aria-label", entry ? "Edit login" : "New login");
-  dialog.innerHTML = `<form id="entry-form"><div class="modal-heading"><div><span class="eyebrow">YOUR PRIVATE VAULT</span><h2>${entry ? "Edit login" : "New login"}</h2></div><button type="button" id="cancel" class="text-button" aria-label="Close">✕</button></div><label>Title<input name="title" required maxlength="200" autocomplete="off"></label><label>Username<input name="username" autocomplete="off"></label><label>Website<input name="url" placeholder="https://example.com" autocomplete="off"></label><label>Password<div class="generator-row"><input name="password" type="password" required autocomplete="new-password"><button type="button" id="generate" class="secondary">Generate</button></div></label><label>Notes<textarea name="notes" rows="3"></textarea></label><div id="modal-error" role="status"></div><button class="primary wide" id="save">Save login</button></form>`;
+  dialog.innerHTML = `<form id="entry-form"><div class="modal-heading"><div><span class="eyebrow">YOUR PRIVATE VAULT</span><h2>${entry ? "Edit login" : "New login"}</h2></div><button type="button" id="cancel" class="text-button" aria-label="Close">✕</button></div><label>Title<input name="title" required maxlength="200" autocomplete="off"></label><label>Username<input name="username" autocomplete="off"></label><label>Website<input name="url" placeholder="https://example.com" autocomplete="off"></label>${entry ? `<div class="desktop-toggles"><label><input id="change-password" type="checkbox"><span>Change password</span></label></div><p class="hint" id="keep-password-hint">Your saved password will stay unchanged.</p>` : ""}<fieldset id="password-fields" class="password-editor" ${entry ? "disabled hidden" : ""}><label>${entry ? "New password" : "Password"}<div class="generator-row"><input name="password" type="password" required autocomplete="new-password"><button type="button" id="generate" class="secondary">Generate</button></div></label><label>Confirm password<input name="confirmPassword" type="password" required autocomplete="new-password"></label></fieldset><label>Notes<textarea name="notes" rows="3"></textarea></label><div id="modal-error" role="status"></div><button class="primary wide" id="save">Save login</button></form>`;
   app.append(dialog);
   const form = dialog.querySelector<HTMLFormElement>("form")!;
   if (entry)
@@ -462,10 +463,18 @@ function editor(entry?: FullEntry) {
       "title",
       "username",
       "url",
-      "password",
       "notes",
     ] as const)
       (form.elements.namedItem(key) as HTMLInputElement).value = entry[key];
+  const passwordFields = form.querySelector<HTMLFieldSetElement>("#password-fields")!;
+  form.querySelector<HTMLInputElement>("#change-password")?.addEventListener("change", (event) => {
+    const changing = (event.currentTarget as HTMLInputElement).checked;
+    passwordFields.disabled = !changing;
+    passwordFields.hidden = !changing;
+    form.querySelector<HTMLElement>("#keep-password-hint")!.hidden = changing;
+    passwordFields.querySelectorAll<HTMLInputElement>("input").forEach(field => { field.value = ""; });
+    if (changing) passwordFields.querySelector<HTMLInputElement>("input")?.focus();
+  });
   const close = () => {
     form.reset();
     dialog.remove();
@@ -482,9 +491,10 @@ function editor(entry?: FullEntry) {
       const password = await invoke<string>("generate_password", {
         length: 24,
       });
-      if (generation === epoch && dialog.isConnected)
-        (form.elements.namedItem("password") as HTMLInputElement).value =
-          password;
+      if (generation === epoch && dialog.isConnected && !passwordFields.disabled) {
+        (form.elements.namedItem("password") as HTMLInputElement).value = password;
+        (form.elements.namedItem("confirmPassword") as HTMLInputElement).value = password;
+      }
     } catch (error) {
       if (generation === epoch && dialog.isConnected)
         dialog.querySelector("#modal-error")!.textContent = String(error);
@@ -493,19 +503,18 @@ function editor(entry?: FullEntry) {
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const generation = epoch;
-    const data = new FormData(form);
-    const input = {
-      id: entry?.id ?? null,
-      title: String(data.get("title")),
-      username: String(data.get("username")),
-      url: String(data.get("url")),
-      password: String(data.get("password")),
-      notes: String(data.get("notes")),
-    };
+    let payload: ReturnType<typeof entryFormPayload>;
+    try {
+      payload = entryFormPayload(new FormData(form), entry?.id ?? null,
+        form.querySelector<HTMLInputElement>("#change-password")?.checked ?? false);
+    } catch (error) {
+      dialog.querySelector("#modal-error")!.textContent = String(error);
+      return;
+    }
     const button = dialog.querySelector<HTMLButtonElement>("#save")!;
     button.disabled = true;
     try {
-      await invoke("save_entry", { input });
+      await invoke("save_entry", payload);
       if (generation !== epoch) return;
       // A cancelled form must not close a newer dialog or discard its inputs.
       if (!dialog.isConnected) {

@@ -581,6 +581,81 @@ mod tests {
         )
     }
     #[test]
+    fn repeated_wire_fills_and_credential_drops_do_not_modify_stored_password() {
+        let (dir, vault, mut state, id) = fixture();
+        let path = dir.path().join("test.kdbx");
+        let original_disk = fs::read(&path).unwrap();
+        state
+            .inner
+            .lock()
+            .unwrap()
+            .index
+            .settings
+            .show_accounts_when_locked = true;
+        state.refresh(&mut vault.inner.lock().unwrap().vault);
+        for restart in 0..4 {
+            for fill in 0..10 {
+                let token = format!("{:032x}", restart * 10 + fill);
+                let suggestions = handle(
+                    &vault,
+                    &state,
+                    None,
+                    Request::Match {
+                        version: 1,
+                        origin: "https://example.test".into(),
+                    },
+                );
+                assert_eq!(suggestions.matches[0].username, "synthetic-user");
+                assert!(suggestions.credential.is_none());
+                assert_eq!(begin(&vault, &state, &id, &token).status, Status::Pending);
+                let response = poll(&vault, &state, "https://example.test", &token);
+                assert_eq!(response.status, Status::Ok);
+                let encoded = zeroize::Zeroizing::new(serde_json::to_vec(&response).unwrap());
+                let decoded: Response = serde_json::from_slice(&encoded).unwrap();
+                let credential = decoded.credential.as_ref().unwrap();
+                assert_eq!(credential.username, "synthetic-user");
+                assert_eq!(credential.password, "synthetic-secret");
+                assert_ne!(credential.username, credential.password);
+                // Exercise all secret-buffer consumers, including independent clone
+                // drops and the original response's Credential::drop implementation.
+                let cloned = credential.clone();
+                drop(cloned);
+                drop(decoded);
+                drop(response);
+                drop(encoded);
+                assert_eq!(
+                    poll(&vault, &state, "https://example.test", &token).status,
+                    Status::Cancelled
+                );
+                let mut guard = vault.inner.lock().unwrap();
+                assert_eq!(guard.vault.reveal(&id).unwrap(), "synthetic-secret");
+                let input = guard.vault.edit(&id).unwrap();
+                assert_eq!(input.username, "synthetic-user");
+                assert_eq!(input.password, "synthetic-secret");
+                assert_eq!(input.notes, "private-note");
+                assert_eq!(fs::read(&path).unwrap(), original_disk);
+            }
+            vault.revoke();
+            {
+                let mut guard = vault.inner.lock().unwrap();
+                // Simulate an application update/restart by constructing a fresh
+                // reader of the existing encrypted file, without saving anything.
+                guard.vault = fakkarni_vault::Vault::new(path.clone());
+                guard
+                    .vault
+                    .unlock("Synthetic test master password")
+                    .unwrap();
+                guard
+                    .vault
+                    .verify_password("Synthetic test master password")
+                    .unwrap();
+                assert_eq!(guard.vault.reveal(&id).unwrap(), "synthetic-secret");
+            }
+            state = BrowserState::new(dir.path().join("index.json"));
+            assert_eq!(fs::read(&path).unwrap(), original_disk);
+        }
+    }
+    #[test]
     fn unlocked_fill_is_automatic_exact_origin_single_use_and_replay_safe() {
         let (_dir, vault, state, id) = fixture();
         let token = "0123456789abcdef0123456789abcdef";
