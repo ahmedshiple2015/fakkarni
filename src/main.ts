@@ -1,7 +1,9 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import "../extension/theme.css";
 import "./style.css";
 import { entryFormPayload } from "./entry-form";
+import { icon } from "./icons";
 
 type Status = {
   exists: boolean;
@@ -23,6 +25,7 @@ let browserSettingsError: string | null = null;
 let pendingFill: BrowserFill | null = null;
 let pendingRead = false;
 let backupBusy = false;
+let view: "vault" | "settings" = "vault";
 type RestorePreview = { token: string; entryCount: number; fileName: string; hasExistingVault: boolean };
 type RestoreReport = { entryCount: number; recoveryPath: string | null; warnings: string[] };
 const app = document.querySelector<HTMLDivElement>("#app")!;
@@ -45,9 +48,8 @@ const esc = (s: string) =>
         c
       ]!,
   );
-const shield =
-  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3 4 6v6c0 5 8 9 8 9s8-4 8-9V6l-8-3Z"/><path d="m8 12 3 3 5-6"/></svg>';
-const brand = `<div class="brand"><span class="brand-icon">${shield}</span><div>Fakkarni <span lang="ar" dir="rtl">فكرني</span><small>YOUR PASSWORDS. YOUR PC.</small></div></div>`;
+const shield = icon("shield");
+const brand = `<div class="brand"><span class="brand-icon">${shield}</span><div>Fakkarni <span lang="ar" dir="rtl">فكرني</span><small>Your passwords. Your PC.</small></div></div>`;
 function message(text: string) {
   const el = document.querySelector("#message");
   if (el) el.textContent = text;
@@ -62,18 +64,48 @@ function clearSecrets() {
   document.querySelector("dialog")?.remove();
   entries = [];
   selected = null;
+  view = "vault";
   app.replaceChildren();
 }
 function shell(content: string) {
-  app.innerHTML = `<aside>${brand}<div class="nav-label">WORKSPACE</div><div class="nav active">${shield} All passwords <span>${entries.length || "—"}</span></div><div class="sidebar-bottom"><span class="local-dot"></span> Stored on this device<small>No cloud. No tracking. Just yours.</small></div></aside><main>${content}</main>`;
+  app.dataset.locked = String(!status.unlocked);
+  app.innerHTML = `<aside>${brand}<div class="nav-label">WORKSPACE</div><nav aria-label="Workspace"><button type="button" class="nav active" id="nav-vault" aria-label="All passwords" title="All passwords" aria-current="page" ${status.unlocked ? "" : "disabled"}>${icon("key")}<span class="nav-text">All passwords</span><span class="nav-count">${status.unlocked ? entries.length : "—"}</span></button><button type="button" class="nav" id="nav-settings" aria-label="Settings" title="Settings" ${status.unlocked ? "" : "disabled"}>${icon("settings")}<span class="nav-text">Settings</span></button></nav><div class="sidebar-bottom"><div class="device-status"><span class="local-dot"></span>Local vault</div><small>Stored on this device.<br>No cloud. No tracking.</small></div></aside><main>${content}</main>`;
+  document.querySelector("#nav-vault")!.addEventListener("click", () => selectView("vault"));
+  document.querySelector("#nav-settings")!.addEventListener("click", () => selectView("settings"));
+}
+function selectView(next: "vault" | "settings", focus = true) {
+  if (!status.unlocked) return;
+  view = next;
+  const settings = next === "settings";
+  document.querySelector<HTMLElement>("#vault-panel")!.hidden = settings;
+  document.querySelector<HTMLElement>("#settings-panel")!.hidden = !settings;
+  document.querySelector("#page-title")!.textContent = settings ? "Settings" : "All passwords";
+  document.querySelector<HTMLElement>("#page-count")!.hidden = settings;
+  document.querySelector("#page-description")!.textContent = settings ? "Make Fakkarni feel at home on your PC." : "A private home for your everyday logins.";
+  for (const [id, active] of [["nav-vault", !settings], ["nav-settings", settings]] as const) {
+    const nav = document.querySelector<HTMLButtonElement>(`#${id}`)!;
+    nav.classList.toggle("active", active);
+    if (active) nav.setAttribute("aria-current", "page");
+    else nav.removeAttribute("aria-current");
+  }
+  // Leaving account details must hide a password that was temporarily revealed.
+  if (settings) {
+    window.clearTimeout(hideTimer);
+    const password = document.querySelector("#password");
+    if (password) password.textContent = "••••••••••••";
+    const reveal = document.querySelector("#reveal");
+    if (reveal) reveal.textContent = "Reveal";
+  }
+  if (focus) document.querySelector<HTMLElement>(settings ? "#page-title" : "#search")?.focus();
 }
 function locked() {
   shell(
-    `<div class="topbar"><span>Personal vault</span><span class="pill">${native ? "LOCAL VAULT" : "DESIGN PREVIEW"}</span></div><section class="welcome"><div class="large-shield">${shield}</div><div class="eyebrow">A LITTLE PEACE OF MIND</div><h1>${status.exists ? "Welcome back." : "Remember less.<br>Keep more safe."}</h1><p>${native ? (status.exists ? "Unlock your vault to pick up where you left off." : "One master password. A private home for all your logins.") : "This browser preview has no vault connection. Open the desktop app to create or unlock your encrypted vault."}</p><form id="unlock"><label>Master password<input id="master" type="password" minlength="${status.exists ? 1 : 12}" required autocomplete="${status.exists ? "current-password" : "new-password"}" ${native ? "" : "disabled"} placeholder="${status.exists ? "Enter your master password" : "At least 12 characters"}"></label>${!status.exists ? `<label>Confirm master password<input id="confirm" type="password" required autocomplete="new-password" ${native ? "" : "disabled"} placeholder="Repeat your master password"></label><small class="hint">Keep it somewhere safe. There is no password reset.</small>` : ""}<button class="primary wide" ${native ? "" : "disabled"}>${status.exists ? "Unlock vault" : "Create my vault"} <span>→</span></button><div id="message" role="status"></div></form><div class="privacy">${shield} Encrypted locally. Always under your control.</div></section>`,
+    `<div class="topbar"><span class="breadcrumb">Personal vault</span><span class="pill">${icon("lock")}${native ? "Vault locked" : "Design preview"}</span></div><section class="welcome"><div class="large-shield">${shield}</div><div class="eyebrow">YOUR PRIVATE SPACE</div><h1>${status.exists ? "Welcome back." : "A little less<br>to remember."}</h1><p>${native ? (status.exists ? "Your logins are right where you left them. Unlock to continue." : "One master password. All your logins, safely stored on this PC.") : "This browser preview has no vault connection. Open the desktop app to create or unlock your encrypted vault."}</p><form id="unlock"><label>Master password<input id="master" type="password" minlength="${status.exists ? 1 : 12}" required autocomplete="${status.exists ? "current-password" : "new-password"}" ${native ? "" : "disabled"} placeholder="${status.exists ? "Enter your master password" : "At least 12 characters"}"></label>${!status.exists ? `<label>Confirm master password<input id="confirm" type="password" required autocomplete="new-password" ${native ? "" : "disabled"} placeholder="Repeat your master password"></label><small class="hint">Keep it somewhere safe. There is no password reset.</small>` : ""}<button class="primary wide" ${native ? "" : "disabled"}>${status.exists ? "Unlock vault" : "Create my vault"}${icon("arrow")}</button><div id="message" role="status"></div></form><div class="privacy">${shield} Encrypted on your device</div></section>`,
   );
   const unlockForm = document.querySelector<HTMLFormElement>("#unlock")!;
   renderBrowserFill();
   if (status.exists && hello.enabled) {
+    unlockForm.querySelector("button")!.classList.replace("primary", "secondary");
     const button = document.createElement("button");
     button.id = "hello-unlock";
     button.className = "primary wide hello-unlock";
@@ -205,13 +237,13 @@ async function refresh() {
 }
 function vault() {
   shell(
-    `<header class="topbar"><div><span class="eyebrow">PERSONAL VAULT</span><h2>All passwords <span class="count">${entries.length}</span></h2></div><button id="lock" class="secondary">Lock vault</button></header><div class="toolbar"><input id="search" type="search" placeholder="Search your vault…" aria-label="Search passwords"><button id="add" class="primary">＋ New login</button></div><div class="vault-grid"><section class="entry-list" aria-label="Saved passwords"></section><section id="detail" class="detail"><div class="empty"><div class="large-shield">${shield}</div><h3>${entries.length ? "A place for every login." : "Your vault starts here."}</h3><p>${entries.length ? "Select an account to see its details." : "Add your first login and give your memory a break."}</p></div></section></div><footer>${shield} End-to-device privacy <span>Auto-lock after ${status.idleMinutes} minutes of inactivity</span></footer><div id="message" role="status"></div>`,
+    `<header class="topbar"><div><div class="breadcrumb">Personal vault <span>/</span> Workspace</div><div class="page-heading"><h1 id="page-title" tabindex="-1">All passwords</h1><span class="count" id="page-count">${entries.length}</span></div><p id="page-description">A private home for your everyday logins.</p></div><button id="lock" class="secondary">${icon("lock")}Lock vault</button></header><div id="vault-panel"><div class="toolbar"><div class="search-wrap">${icon("search")}<input id="search" type="search" placeholder="Search logins…" aria-label="Search passwords"></div><button id="add" class="primary">${icon("plus")}New login</button></div><div class="vault-grid"><section class="accounts-panel" aria-label="Saved passwords"><div class="list-heading"><span>SAVED LOGINS</span><span id="list-count">${entries.length}</span></div><div class="entry-list"></div></section><section id="detail" class="detail" aria-label="Login details"><div class="empty"><div class="large-shield">${icon("key")}</div><h2>${entries.length ? "A place for every login." : "Your vault starts here."}</h2><p>${entries.length ? "Select an account to see its details." : "Add your first login and give your memory a break."}</p></div></section></div></div><div id="settings-panel" hidden><div class="settings-intro"><span class="eyebrow">PREFERENCES</span><p>Unlock, fill, and back up. Just the way you like it.</p></div></div><footer>${shield}<span class="footer-privacy">Encrypted on this device</span><span>Auto-lock · ${status.idleMinutes} minutes</span></footer><div id="message" role="status"></div>`,
   );
   const settings = document.createElement("section");
   settings.className = "hello-settings";
   settings.setAttribute("aria-label", "Windows Hello settings");
-  settings.innerHTML = `<div><strong>Windows Hello</strong><p>${esc(hello.enabled ? "Enabled on this PC. Your master password remains your recovery fallback." : hello.reason || "Unlock with your Windows PIN, fingerprint, or face after setup.")}</p></div><button class="secondary" id="hello-settings" ${native && (hello.available || hello.enabled) ? "" : "disabled"}>${hello.enabled ? "Disable Windows Hello" : "Enable Windows Hello"}</button>`;
-  document.querySelector("footer")!.before(settings);
+  settings.innerHTML = `<div><h2>Windows Hello</h2><p>${esc(hello.enabled ? "Enabled on this PC. Your master password remains your recovery fallback." : hello.reason || "Unlock with your Windows PIN, fingerprint, or face after setup.")}</p></div><button class="secondary" id="hello-settings" ${native && (hello.available || hello.enabled) ? "" : "disabled"}>${hello.enabled ? "Disable Windows Hello" : "Enable Windows Hello"}</button>`;
+  document.querySelector("#settings-panel")!.append(settings);
   settings.querySelector("button")!.addEventListener("click", () => {
     if (!native) return;
     if (!hello.enabled) { helloSetup(); return; }
@@ -236,7 +268,9 @@ function vault() {
   document.querySelector("#add")!.addEventListener("click", () => editor());
   document.querySelector("#search")!.addEventListener("input", renderList);
   renderList();
-  document.querySelector<HTMLInputElement>("#search")?.focus();
+  if (entries.length) detail(entries.some(entry => entry.id === selected) ? selected! : entries[0].id, false);
+  selectView(view, false);
+  if (view === "vault") document.querySelector<HTMLInputElement>("#search")?.focus();
 }
 async function refreshBrowserFill() {
   if (!native || pendingRead) return;
@@ -270,8 +304,8 @@ function browserPreferences() {
   const section = document.createElement("section");
   section.className = "desktop-settings";
   section.setAttribute("aria-label", "Browser privacy settings");
-  section.innerHTML = `<h3>Browser autofill</h3><p class="hint">Select an account in Brave or Edge to fill it immediately when unlocked. If locked, Fakkarni comes forward and fills after you unlock. Autofill never submits a form.</p><div class="desktop-toggles"><label><input type="checkbox" id="locked-suggestions" ${browserSettings.showAccountsWhenLocked ? "checked" : ""} ${browserSettingsError ? "disabled" : ""}><span>Show saved accounts in the browser while my vault is locked</span></label></div><p class="hint">When enabled, account names, usernames, and website origins are stored in a separate unencrypted file on this PC, so they remain visible while locked and to programs running as your Windows user. Passwords and notes stay encrypted. Turning this off removes the local index.</p><p id="browser-preferences-status" class="hint" role="status">${esc(browserSettingsError || "")}</p>`;
-  document.querySelector("footer")!.before(section);
+  section.innerHTML = `<h2>Browser autofill</h2><p class="hint">Select an account in Brave or Edge to fill it immediately when unlocked. If locked, Fakkarni comes forward and fills after you unlock. Autofill never submits a form.</p><div class="desktop-toggles"><label><input type="checkbox" id="locked-suggestions" ${browserSettings.showAccountsWhenLocked ? "checked" : ""} ${browserSettingsError ? "disabled" : ""}><span>Show saved accounts in the browser while my vault is locked</span></label></div><p class="hint">When enabled, account names, usernames, and website origins are stored in a separate unencrypted file on this PC, so they remain visible while locked and to programs running as your Windows user. Passwords and notes stay encrypted. Turning this off removes the local index.</p><p id="browser-preferences-status" class="hint" role="status">${esc(browserSettingsError || "")}</p>`;
+  document.querySelector("#settings-panel")!.append(section);
   const checkbox = section.querySelector<HTMLInputElement>("#locked-suggestions")!;
   checkbox.addEventListener("change", async () => {
     const generation = epoch;
@@ -296,8 +330,8 @@ function backupPreferences() {
   const section = document.createElement("section");
   section.className = "desktop-settings";
   section.setAttribute("aria-label", "Backup and PC transfer");
-  section.innerHTML = `<h3>Backup &amp; PC transfer</h3><p class="hint">Export a local encrypted copy for backup or to transfer to another PC. You need the master password used when the backup was made; Windows Hello alone cannot open it on another PC. Choose a folder outside cloud sync if you want it to stay on this device.</p><div class="fill-actions"><button class="secondary" id="create-backup">Export encrypted vault</button><button class="text-button" id="restore-backup">Import / restore vault</button></div><p class="hint">Restore validates the selected file before replacing your vault and preserves an encrypted recovery copy of the current file. Restore ends the current session and resets device unlock and the browser account index.</p><p id="backup-status" role="status"></p>`;
-  document.querySelector("footer")!.before(section);
+  section.innerHTML = `<h2>Backup &amp; PC transfer</h2><p class="hint">Export a local encrypted copy for backup or to transfer to another PC. You need the master password used when the backup was made; Windows Hello alone cannot open it on another PC. Choose a folder outside cloud sync if you want it to stay on this device.</p><div class="fill-actions"><button class="secondary" id="create-backup">Export encrypted vault</button><button class="text-button" id="restore-backup">Import / restore vault</button></div><p class="hint">Restore validates the selected file before replacing your vault and preserves an encrypted recovery copy of the current file. Restore ends the current session and resets device unlock and the browser account index.</p><p id="backup-status" role="status"></p>`;
+  document.querySelector("#settings-panel")!.append(section);
   section.querySelector("#restore-backup")!.addEventListener("click", restoreBackup);
   section.querySelector<HTMLButtonElement>("#create-backup")!.addEventListener("click", async (event) => {
     if (backupBusy || !native || !status.unlocked) return;
@@ -396,8 +430,8 @@ function desktopSettings() {
     ["closeToTray", "Keep running in system tray when I close the window"],
     ["startMinimized", "Open in system tray"],
   ];
-  section.innerHTML = `<h3 id="desktop-settings-title">Desktop preferences</h3><p class="hint">Brave suggestions require Fakkarni to stay running. Auto-lock still applies. Closing to the tray keeps your current session until it locks automatically; use Lock vault to lock immediately.</p><div class="desktop-toggles">${choices.map(([key, label]) => `<label><input type="checkbox" name="${key}" ${appSettings[key] ? "checked" : ""} ${disabled ? "disabled" : ""}><span>${label}</span></label>`).join("")}</div><p class="hint" id="startup-hint" ${appSettings.startWithWindows ? "" : "hidden"}>Windows startup uses this app's current executable location. Keep it in place; this build has no installer.</p><p class="hint" id="desktop-settings-status" role="status">${esc(settingsError || (!native ? "Desktop preferences are available in the desktop app." : ""))}</p>`;
-  document.querySelector("footer")!.before(section);
+  section.innerHTML = `<h2 id="desktop-settings-title">Desktop preferences</h2><p class="hint">Keep Fakkarni running for Brave and Edge autofill. Auto-lock still applies in the tray; choose Lock vault to lock immediately.</p><div class="desktop-toggles">${choices.map(([key, label]) => `<label><input type="checkbox" name="${key}" ${appSettings[key] ? "checked" : ""} ${disabled ? "disabled" : ""}><span>${label}</span></label>`).join("")}</div><p class="hint" id="startup-hint" ${appSettings.startWithWindows ? "" : "hidden"}>Windows startup uses this app's current executable location. Keep it in place; this build has no installer.</p><p class="hint" id="desktop-settings-status" role="status">${esc(settingsError || (!native ? "Desktop preferences are available in the desktop app." : ""))}</p>`;
+  document.querySelector("#settings-panel")!.append(section);
   section.querySelectorAll<HTMLInputElement>('input[type="checkbox"]').forEach((checkbox) => {
     checkbox.addEventListener("change", async () => {
       if (!native || !status.unlocked) return;
@@ -497,16 +531,17 @@ function renderList() {
     list
       .map(
         (entry) =>
-          `<button class="entry ${selected === entry.id ? "selected" : ""}" data-id="${esc(entry.id)}"><span class="avatar">${esc((entry.title || "?").slice(0, 1).toUpperCase())}</span><span><strong>${esc(entry.title)}</strong><small>${esc(entry.username || "No username")}</small></span><span class="chevron">›</span></button>`,
+          `<button class="entry ${selected === entry.id ? "selected" : ""}" aria-pressed="${selected === entry.id}" data-id="${esc(entry.id)}"><span class="avatar" aria-hidden="true">${esc((entry.title || "?").slice(0, 1).toUpperCase())}</span><span class="entry-copy"><strong>${esc(entry.title)}</strong><small>${esc(entry.username || "No username")}</small></span><span class="chevron">${icon("chevron")}</span></button>`,
       )
-      .join("") || '<p class="list-empty">No logins found.</p>';
+      .join("") || `<div class="list-empty">${icon("search")}<strong>${entries.length ? "No matching logins" : "No logins yet"}</strong><p>${entries.length ? "Try another name, username, or website." : "Add a login to start filling from your browser."}</p></div>`;
+  document.querySelector("#list-count")!.textContent = String(list.length);
   document
     .querySelectorAll<HTMLButtonElement>(".entry")
     .forEach((el) =>
       el.addEventListener("click", () => detail(el.dataset.id!)),
     );
 }
-function detail(id: string) {
+function detail(id: string, focus = true) {
   const entry = entries.find((e) => e.id === id);
   if (!entry) return;
   window.clearTimeout(hideTimer);
@@ -515,10 +550,10 @@ function detail(id: string) {
   document.querySelectorAll<HTMLButtonElement>(".entry").forEach((button) => {
     const active = button.dataset.id === id;
     button.setAttribute("aria-pressed", String(active));
-    if (active) button.focus();
+    if (active && focus) button.focus();
   });
   document.querySelector("#detail")!.innerHTML =
-    `<div class="detail-heading"><span class="avatar big">${esc((entry.title || "?").slice(0, 1).toUpperCase())}</span><h2>${esc(entry.title)}</h2><p>LOGIN DETAILS</p></div><div class="field"><label>Username</label><div>${esc(entry.username || "—")}</div></div><div class="field"><label>Password</label><div class="password-row"><span id="password">••••••••••••</span><button id="reveal" class="text-button">Reveal</button></div></div><div class="field"><label>Website</label><div class="url">${esc(entry.url || "—")}</div></div><button id="edit" class="secondary wide">Edit login</button><button id="delete-login" class="danger wide">Delete login</button><p class="hint">Passwords hide automatically after 15 seconds.</p>`;
+    `<div class="detail-heading"><span class="avatar big" aria-hidden="true">${esc((entry.title || "?").slice(0, 1).toUpperCase())}</span><div><span class="eyebrow">LOGIN DETAILS</span><h2>${esc(entry.title)}</h2></div><span class="detail-safe" title="Saved in your encrypted vault">${shield}</span></div><div class="detail-fields"><div class="field"><span class="field-label">Username</span><div>${esc(entry.username || "—")}</div></div><div class="field"><span class="field-label">Password</span><div class="password-row"><span id="password">••••••••••••</span><button id="reveal" class="text-button">Reveal</button></div></div><div class="field"><span class="field-label">Website</span><div class="url">${icon("globe")}<span>${esc(entry.url || "—")}</span></div></div></div><div class="detail-actions"><button id="edit" class="secondary">${icon("edit")}Edit login</button><button id="delete-login" class="danger">${icon("trash")}Delete login</button></div><p class="hint detail-hint">${icon("eye")}Revealed passwords hide after 15 seconds.</p>`;
   document.querySelector("#reveal")!.addEventListener("click", async () => {
     const generation = epoch;
     const target = document.querySelector("#password")!;
@@ -532,7 +567,7 @@ function detail(id: string) {
     button.disabled = true;
     try {
       const password = await invoke<string>("reveal_password", { id });
-      if (generation !== epoch || selected !== id || !target.isConnected)
+      if (generation !== epoch || selected !== id || view !== "vault" || !target.isConnected)
         return;
       target.textContent = password;
       button.textContent = "Hide";

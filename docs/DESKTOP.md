@@ -2,10 +2,12 @@
 
 Fakkarni remains a normal Windows desktop application. These features are configured inside the unlocked vault. Startup and Hello enrollment are off until the user explicitly enables them.
 
+Open **Settings** in the sidebar after unlocking to configure Windows Hello, desktop preferences, browser autofill, and backup/PC transfer. **All passwords** returns to account search and details. See [UI design](UI-DESIGN.md) for the shared desktop/extension theme and visual verification.
+
 ## Windows Hello
 
 1. Create or unlock the vault using the master password.
-2. Choose **Enable Windows Hello** and reenter that master password.
+2. Open **Settings**, choose **Enable Windows Hello**, and reenter that master password.
 3. Complete Windows' own PIN, fingerprint, or face verification prompt.
 4. Subsequent locked sessions show **Unlock with Windows Hello**, with master-password fallback always available.
 
