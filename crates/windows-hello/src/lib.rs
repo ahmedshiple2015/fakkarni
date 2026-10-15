@@ -2,7 +2,8 @@
 //!
 //! Passport KSP's mandatory-gesture and implementation-type properties are
 //! provider-specific. Unsupported properties fail closed. RSA-OAEP SHA-256 is
-//! required; no padding or software-provider fallback is attempted.
+//! required. Only the public key is exported for BCrypt encryption; private
+//! operations remain in Passport, with no padding or private-provider fallback.
 
 use zeroize::Zeroizing;
 
@@ -116,11 +117,11 @@ mod platform {
             written: *mut u32,
             flags: u32,
         ) -> i32;
-        fn NCryptEncrypt(
+        fn NCryptExportKey(
             key: Handle,
-            input: *const u8,
-            len: u32,
-            padding: *const OaepInfo,
+            export_key: Handle,
+            blob_type: *const u16,
+            parameters: *const c_void,
             output: *mut u8,
             cap: u32,
             written: *mut u32,
@@ -138,6 +139,58 @@ mod platform {
         ) -> i32;
         fn NCryptDeleteKey(key: Handle, flags: u32) -> i32;
         fn NCryptFreeObject(handle: Handle) -> i32;
+    }
+    #[link(name = "bcrypt")]
+    unsafe extern "system" {
+        fn BCryptOpenAlgorithmProvider(
+            out: *mut Handle,
+            algorithm: *const u16,
+            implementation: *const u16,
+            flags: u32,
+        ) -> i32;
+        fn BCryptCloseAlgorithmProvider(algorithm: Handle, flags: u32) -> i32;
+        fn BCryptImportKeyPair(
+            algorithm: Handle,
+            import_key: Handle,
+            blob_type: *const u16,
+            out: *mut Handle,
+            input: *const u8,
+            len: u32,
+            flags: u32,
+        ) -> i32;
+        fn BCryptDestroyKey(key: Handle) -> i32;
+        fn BCryptEncrypt(
+            key: Handle,
+            input: *const u8,
+            len: u32,
+            padding: *const OaepInfo,
+            iv: *mut u8,
+            iv_len: u32,
+            output: *mut u8,
+            cap: u32,
+            written: *mut u32,
+            flags: u32,
+        ) -> i32;
+    }
+    struct PublicAlgorithm(Handle);
+    impl Drop for PublicAlgorithm {
+        fn drop(&mut self) {
+            if self.0 != 0 {
+                unsafe {
+                    BCryptCloseAlgorithmProvider(self.0, 0);
+                }
+            }
+        }
+    }
+    struct PublicKey(Handle);
+    impl Drop for PublicKey {
+        fn drop(&mut self) {
+            if self.0 != 0 {
+                unsafe {
+                    BCryptDestroyKey(self.0);
+                }
+            }
+        }
     }
     #[link(name = "advapi32")]
     unsafe extern "system" {
@@ -377,6 +430,75 @@ mod platform {
     pub fn seal(name: &str, plaintext: &[u8], hwnd: isize) -> Result<Vec<u8>, String> {
         let (_provider, key) = existing(name)?;
         ui(&key, hwnd)?;
+        // Passport exposes a public RSA key but need not implement public-key
+        // encryption itself. Export no private material, and keep all private
+        // decryptions on the verified, gesture-protected Passport key.
+        let mut blob = [0u8; 24 + 8 + RSA_BYTES];
+        let mut written = 0;
+        status(
+            unsafe {
+                NCryptExportKey(
+                    key.0,
+                    0,
+                    wide("RSAPUBLICBLOB").as_ptr(),
+                    null(),
+                    blob.as_mut_ptr(),
+                    blob.len() as u32,
+                    &mut written,
+                    SILENT,
+                )
+            },
+            "public key export",
+        )?;
+        if written as usize > blob.len() {
+            return Err("Windows Hello returned an invalid public key.".into());
+        }
+        encrypt_public(&blob[..written as usize], plaintext)
+    }
+    fn encrypt_public(blob: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, String> {
+        validate_plaintext(plaintext)?;
+        // BCRYPT_RSAKEY_BLOB has six little-endian ULONG fields, followed by
+        // big-endian exponent and modulus. Accept a public RSA-2048 blob only.
+        if blob.len() < 24 {
+            return Err("Windows Hello returned an invalid public key.".into());
+        }
+        let field = |offset| u32::from_le_bytes(blob[offset..offset + 4].try_into().unwrap());
+        let exponent_len = field(8) as usize;
+        if field(0) != 0x31415352
+            || field(4) != 2048
+            || !(1..=8).contains(&exponent_len)
+            || field(12) != RSA_BYTES as u32
+            || field(16) != 0
+            || field(20) != 0
+            || blob.len() != 24 + exponent_len + RSA_BYTES
+        {
+            return Err("Windows Hello returned an invalid public key.".into());
+        }
+        let mut handle = 0;
+        let code = unsafe {
+            BCryptOpenAlgorithmProvider(
+                &mut handle,
+                wide("RSA").as_ptr(),
+                wide("Microsoft Primitive Provider").as_ptr(),
+                0,
+            )
+        };
+        let algorithm = PublicAlgorithm(handle);
+        status(code, "public encryption provider access")?;
+        let mut handle = 0;
+        let code = unsafe {
+            BCryptImportKeyPair(
+                algorithm.0,
+                0,
+                wide("RSAPUBLICBLOB").as_ptr(),
+                &mut handle,
+                blob.as_ptr(),
+                blob.len() as u32,
+                0,
+            )
+        };
+        let public = PublicKey(handle);
+        status(code, "public key import")?;
         let sha = wide("SHA256");
         let info = OaepInfo {
             algorithm: sha.as_ptr(),
@@ -387,15 +509,17 @@ mod platform {
         let mut written = 0;
         status(
             unsafe {
-                NCryptEncrypt(
-                    key.0,
+                BCryptEncrypt(
+                    public.0,
                     plaintext.as_ptr(),
                     plaintext.len() as u32,
                     &info,
+                    null_mut(),
+                    0,
                     result.as_mut_ptr(),
                     RSA_BYTES as u32,
                     &mut written,
-                    OAEP | SILENT,
+                    OAEP,
                 )
             },
             "key wrapping",
@@ -417,21 +541,22 @@ mod platform {
         };
         let mut result = Zeroizing::new(vec![0; RSA_BYTES]);
         let mut written = 0;
-        status(
-            unsafe {
-                NCryptDecrypt(
-                    key.0,
-                    ciphertext.as_ptr(),
-                    ciphertext.len() as u32,
-                    &info,
-                    result.as_mut_ptr(),
-                    RSA_BYTES as u32,
-                    &mut written,
-                    OAEP,
-                )
-            },
-            "unlock",
-        )?;
+        let code = unsafe {
+            NCryptDecrypt(
+                key.0,
+                ciphertext.as_ptr(),
+                ciphertext.len() as u32,
+                &info,
+                result.as_mut_ptr(),
+                RSA_BYTES as u32,
+                &mut written,
+                OAEP,
+            )
+        };
+        if matches!(code as u32, 0x80090027 | 0x80090029) {
+            return Err(format!("This Windows Hello provider does not support the required RSA-OAEP SHA-256 unlock (0x{:08X}). Use your master password.", code as u32));
+        }
+        status(code, "unlock")?;
         if written as usize != WRAPPING_KEY_BYTES {
             return Err("Windows Hello returned an invalid wrapping key.".into());
         }
@@ -455,6 +580,113 @@ mod platform {
         status(unsafe { NCryptDeleteKey(key.0, SILENT) }, "key deletion")?;
         key.0 = 0;
         Ok(())
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn public_bcrypt_oaep_interoperates_with_private_ncrypt_decrypt() {
+            // Ephemeral software RSA key exercises the public wrapping path
+            // without a Hello prompt, TPM, persisted key, or production fallback.
+            let mut handle = 0;
+            status(
+                unsafe {
+                    NCryptOpenStorageProvider(
+                        &mut handle,
+                        wide("Microsoft Software Key Storage Provider").as_ptr(),
+                        0,
+                    )
+                },
+                "test provider",
+            )
+            .unwrap();
+            let provider = Owned(handle);
+            let mut handle = 0;
+            status(
+                unsafe {
+                    NCryptCreatePersistedKey(
+                        provider.0,
+                        &mut handle,
+                        wide("RSA").as_ptr(),
+                        null(),
+                        0,
+                        0,
+                    )
+                },
+                "test key",
+            )
+            .unwrap();
+            let key = Owned(handle);
+            set_number(&key, "Length", 2048).unwrap();
+            status(
+                unsafe { NCryptFinalizeKey(key.0, SILENT) },
+                "test key finalize",
+            )
+            .unwrap();
+            let mut blob = [0u8; 24 + 8 + RSA_BYTES];
+            let mut written = 0;
+            status(
+                unsafe {
+                    NCryptExportKey(
+                        key.0,
+                        0,
+                        wide("RSAPUBLICBLOB").as_ptr(),
+                        null(),
+                        blob.as_mut_ptr(),
+                        blob.len() as u32,
+                        &mut written,
+                        SILENT,
+                    )
+                },
+                "test public export",
+            )
+            .unwrap();
+            let blob = &blob[..written as usize];
+            let plaintext = [0x7bu8; WRAPPING_KEY_BYTES];
+            let ciphertext = encrypt_public(blob, &plaintext).unwrap();
+            assert_eq!(ciphertext.len(), RSA_BYTES);
+            assert_ne!(ciphertext, encrypt_public(blob, &plaintext).unwrap());
+            let sha = wide("SHA256");
+            let info = OaepInfo {
+                algorithm: sha.as_ptr(),
+                label: null(),
+                label_len: 0,
+            };
+            let mut recovered = Zeroizing::new(vec![0u8; RSA_BYTES]);
+            let mut written = 0;
+            status(
+                unsafe {
+                    NCryptDecrypt(
+                        key.0,
+                        ciphertext.as_ptr(),
+                        ciphertext.len() as u32,
+                        &info,
+                        recovered.as_mut_ptr(),
+                        recovered.len() as u32,
+                        &mut written,
+                        OAEP | SILENT,
+                    )
+                },
+                "test decryption",
+            )
+            .unwrap();
+            assert_eq!(written as usize, WRAPPING_KEY_BYTES);
+            assert_eq!(&recovered[..written as usize], &plaintext);
+        }
+
+        #[test]
+        fn rejects_malformed_or_private_public_key_blobs_before_import() {
+            for len in [0, 23, 24, 283] {
+                assert!(encrypt_public(&vec![0u8; len], &[0; WRAPPING_KEY_BYTES]).is_err());
+            }
+            let mut blob = vec![0u8; 24 + 3 + RSA_BYTES];
+            for (offset, value) in [(0, 0x31415352u32), (4, 2048), (8, 3), (12, 256), (16, 128)] {
+                blob[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+            }
+            assert!(encrypt_public(&blob, &[0; WRAPPING_KEY_BYTES]).is_err());
+        }
     }
 }
 
