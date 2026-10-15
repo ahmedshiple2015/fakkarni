@@ -1,0 +1,13 @@
+/.tools/
+/node_modules/
+/dist/
+/target/
+*.kdbx
+*.kdbx.*
+*.keyx
+*.key
+.env
+.env.*
+*.log
+/test-results/
+/artifacts/
