@@ -8,7 +8,12 @@ const originLabel = document.querySelector<HTMLElement>("#origin")!;
 const state = document.querySelector<HTMLElement>("#state")!;
 const list = document.querySelector<HTMLElement>("#matches")!;
 const refresh = document.querySelector<HTMLButtonElement>("#refresh")!;
+const connection = document.querySelector<HTMLElement>("#connection")!;
 let generation = 0;
+const setConnection = (status: "checking" | "connected" | "locked" | "unavailable", label: string) => {
+  connection.dataset.status = status;
+  connection.textContent = label;
+};
 const setState = (message: string) => {
   state.textContent = message;
 };
@@ -18,12 +23,15 @@ async function load() {
   list.replaceChildren();
   originLabel.textContent = "Checking active site…";
   refresh.disabled = true;
+  setConnection("checking", "Checking");
+  setState("Looking for accounts on this website…");
   if (
     typeof chrome === "undefined" ||
     !chrome.tabs?.query ||
     !chrome.runtime?.sendNativeMessage
   ) {
     originLabel.textContent = "Extension preview";
+    setConnection("unavailable", "Not connected");
     setState(
       "Load this extension in Brave or Edge to connect to your local desktop vault. This preview cannot access accounts.",
     );
@@ -36,6 +44,7 @@ async function load() {
     const origin = httpsOrigin(tab?.url);
     if (!tab || typeof tab.id !== "number" || !origin) {
       originLabel.textContent = "No supported site";
+      setConnection("unavailable", "HTTPS required");
       setState(
         "Open an HTTPS website, then refresh to find matching accounts.",
       );
@@ -73,34 +82,40 @@ async function load() {
     if (current !== generation) return;
     if (active?.id !== tab.id || active.url !== tab.url) {
       originLabel.textContent = "Active page changed";
+      setConnection("unavailable", "Page changed");
       setState("Refresh to check the current page.");
       return;
     }
     const response = validateResponse(raw);
     if (!response) {
+      setConnection("unavailable", "Connection error");
       setState(
         "The desktop connection returned an invalid response. No accounts were displayed.",
       );
       return;
     }
     if (response.status === "locked") {
+      setConnection("locked", "Vault locked");
       if (!response.matches.length) {
         setState("Unlock your vault in the desktop app, then refresh. To show accounts while locked, enable locked account suggestions in desktop preferences.");
         return;
       }
     }
     if (response.status === "unavailable") {
+      setConnection("unavailable", "Not connected");
       setState(
         connectionError || "The browser bridge is installed, but it cannot reach Fakkarni. Start the desktop app, then refresh. (DESKTOP_UNAVAILABLE)",
       );
       return;
     }
     if (!["ok", "locked"].includes(response.status)) {
+      setConnection("unavailable", "Connection error");
       setState(
         "The desktop vault could not complete this request. Try refreshing.",
       );
       return;
     }
+    if (response.status === "ok") setConnection("connected", "Unlocked");
     setState(response.status === "locked" ? "Vault locked. Choose an account to open Fakkarni and unlock, then this page fills automatically." :
       response.matches.length
         ? `${response.matches.length} matching ${response.matches.length === 1 ? "account" : "accounts"}`
@@ -113,6 +128,7 @@ async function load() {
       icon.setAttribute("aria-hidden", "true");
       icon.textContent = (match.title || "?").slice(0, 1).toUpperCase();
       const copy = document.createElement("div");
+      copy.className = "account-copy";
       const title = document.createElement("strong");
       title.textContent = match.title || "Untitled login";
       const username = document.createElement("span");
@@ -122,11 +138,26 @@ async function load() {
       button.type = "button";
       button.className = "account-button";
       const action = document.createElement("small");
-      action.textContent = response.status === "locked" ? "Unlock and fill →" : "Fill →";
+      action.textContent = response.status === "locked" ? "Unlock to fill" : "Fill login";
       copy.append(action);
       button.append(icon, copy);
+      const arrow = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      arrow.setAttribute("viewBox", "0 0 24 24");
+      arrow.setAttribute("fill", "none");
+      arrow.setAttribute("stroke", "currentColor");
+      arrow.setAttribute("stroke-width", "1.6");
+      arrow.setAttribute("stroke-linecap", "round");
+      arrow.setAttribute("stroke-linejoin", "round");
+      arrow.setAttribute("aria-hidden", "true");
+      arrow.classList.add("account-arrow");
+      const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      path.setAttribute("d", "M5 12h14m-6-6 6 6-6 6");
+      arrow.append(path);
+      button.append(arrow);
       button.addEventListener("click", async () => {
         button.disabled = true;
+        button.setAttribute("aria-busy", "true");
+        action.textContent = "Starting fill…";
         try {
           const result = await api.runtime.sendMessage({action: "fill_account", tabId: tab.id, url: tab.url, id: match.id});
           if (current !== generation) return;
@@ -142,16 +173,24 @@ async function load() {
             setState("The extension background connection is unavailable. Reload Fakkarni at the browser’s extensions page. (WORKER_UNAVAILABLE)");
           else setState("The browser could not send the fill request. Reopen this popup and retry. (REQUEST_FAILED)");
         }
-        finally { if (current === generation) button.disabled = false; }
+        finally {
+          if (current === generation) {
+            button.disabled = false;
+            button.removeAttribute("aria-busy");
+            action.textContent = response.status === "locked" ? "Unlock to fill" : "Fill login";
+          }
+        }
       });
       row.append(button);
       list.append(row);
     }
   } catch {
-    if (current === generation)
+    if (current === generation) {
+      setConnection("unavailable", "Not connected");
       setState(
         "Unable to read the active tab. Reopen the extension on an HTTPS website.",
       );
+    }
   } finally {
     if (current === generation) refresh.disabled = false;
   }

@@ -4,32 +4,31 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Fakkarni</title>
+    <link rel="stylesheet" href="theme.css" />
     <link rel="stylesheet" href="popup.css" />
   </head>
   <body>
     <header>
-      <span class="mark" aria-hidden="true">F</span>
-      <div>
+      <span class="mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 6v6c0 4.5 8 9 8 9s8-4.5 8-9V6l-8-3Z"/><path d="m8.5 11.5 2.5 2.5 4.5-5"/></svg></span>
+      <div class="brand">
         <h1>Fakkarni <span lang="ar" dir="rtl">فكرني</span></h1>
-        <p>YOUR LOCAL VAULT</p>
+        <p>Your local vault</p>
       </div>
-      <span class="local">LOCAL</span>
+      <span class="local" title="Passwords stay on this PC">Local</span>
     </header>
     <main>
-      <div class="site-label">CURRENT SITE</div>
-      <div id="origin">Checking active site…</div>
-      <p id="state" role="status" aria-live="polite"></p>
-      <ul id="matches" aria-label="Matching accounts"></ul>
-      <button id="refresh" type="button">
-        Refresh accounts <span aria-hidden="true">↻</span>
-      </button>
-      <p class="hint">
-        Choose an account to fill. Unlock Fakkarni if needed, then review and submit the form yourself.
-      </p>
+      <section class="site" aria-labelledby="site-heading">
+        <div class="section-heading"><h2 id="site-heading">Current website</h2><span id="connection" class="connection" data-status="checking">Checking</span></div>
+        <div id="origin">Checking active site…</div>
+      </section>
+      <section class="accounts" aria-labelledby="accounts-heading">
+        <div class="section-heading"><h2 id="accounts-heading">Available accounts</h2><button id="refresh" type="button" aria-label="Refresh accounts" title="Refresh accounts"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7v5h-5"/><path d="M4 17v-5h5"/><path d="M6.1 7a7 7 0 0 1 11.6-1L20 9M4 15l2.3 3A7 7 0 0 0 17.9 17"/></svg><span>Refresh</span></button></div>
+        <p id="state" role="status" aria-live="polite" aria-atomic="true"></p>
+        <ul id="matches" aria-label="Matching accounts"></ul>
+      </section>
+      <p class="hint">Choose an account to fill. If your vault is locked, unlock it in Fakkarni to continue. You submit the form.</p>
     </main>
-    <footer>
-      <span aria-hidden="true">●</span> On your PC. Under your control.
-    </footer>
+    <footer><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3M12 14v3"/></svg>Stored on your PC. Only on your PC.</footer>
     <script type="module" src="dist/popup.js"></script>
   </body>
 </html>
