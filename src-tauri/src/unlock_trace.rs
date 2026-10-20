@@ -58,6 +58,22 @@ pub(super) fn failure(stage: &'static str, error: &str) {
     #[cfg(not(debug_assertions))]
     let _ = (stage, error);
 }
+pub(super) fn provider_failure(operation: &'static str, code: u32) {
+    #[cfg(debug_assertions)]
+    debug::record(
+        match operation {
+            "provider access" => "pin_cng_provider_error",
+            "key access" => "pin_cng_key_open_error",
+            "key policy setup" => "pin_cng_owner_or_policy_error",
+            "key policy verification" => "pin_cng_policy_error",
+            "unlock" => "pin_cng_decrypt_error",
+            _ => "pin_cng_error",
+        },
+        Some(code),
+    );
+    #[cfg(not(debug_assertions))]
+    let _ = (operation, code);
+}
 #[cfg(any(debug_assertions, test))]
 fn error_code(error: &str) -> Option<u32> {
     error.match_indices("0x").find_map(|(offset, _)| {

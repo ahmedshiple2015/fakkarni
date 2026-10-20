@@ -181,12 +181,12 @@ fn begin_ready(app: &tauri::AppHandle, request_id: String, epoch: u64) {
                         return Err(HELLO_CANCELLED.into());
                     }
                     crate::unlock_trace::record("pin_prompt_started");
-                    manager
-                        .unlock(owner.hwnd)
-                        .inspect(|_| crate::unlock_trace::record("pin_prompt_verified"))
-                        .inspect_err(|error| {
-                            crate::unlock_trace::failure("pin_prompt_error", error)
-                        })
+                    fakkarni_windows_hello::with_failure_observer(
+                        crate::unlock_trace::provider_failure,
+                        || manager.unlock(owner.hwnd),
+                    )
+                    .inspect(|_| crate::unlock_trace::record("pin_prompt_verified"))
+                    .inspect_err(|error| crate::unlock_trace::failure("pin_prompt_error", error))
                 }
                 #[cfg(not(windows))]
                 {

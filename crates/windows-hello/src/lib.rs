@@ -12,6 +12,47 @@ use zeroize::Zeroizing;
 const WRAPPING_KEY_BYTES: usize = 32;
 const RSA_BYTES: usize = 256;
 
+#[cfg(debug_assertions)]
+mod diagnostics {
+    use std::cell::Cell;
+    type Observer = fn(&'static str, u32);
+    thread_local! { static OBSERVER: Cell<Option<Observer>> = const { Cell::new(None) }; }
+    pub(super) fn observe(operation: &'static str, code: u32) {
+        OBSERVER.with(|observer| {
+            if let Some(observer) = observer.get() {
+                observer(operation, code);
+            }
+        });
+    }
+    pub(super) fn with<T>(observer: Observer, operation: impl FnOnce() -> T) -> T {
+        struct Reset(Option<Observer>);
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                OBSERVER.with(|current| current.set(self.0));
+            }
+        }
+        let _reset = Reset(OBSERVER.with(|current| current.replace(Some(observer))));
+        operation()
+    }
+}
+
+/// Opt-in debug diagnostics contain only a static native-operation label and
+/// numeric status. No key names, payloads, credentials or PIN input are exposed.
+pub fn with_failure_observer<T>(
+    observer: fn(&'static str, u32),
+    operation: impl FnOnce() -> T,
+) -> T {
+    #[cfg(debug_assertions)]
+    {
+        diagnostics::with(observer, operation)
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        let _ = observer;
+        operation()
+    }
+}
+
 #[cfg(any(windows, test))]
 fn validate_name_for_sid(name: &str, sid: &str) -> Result<(), String> {
     let prefix = format!("{sid}//Fakkarni//");
@@ -244,7 +285,11 @@ mod platform {
     fn wide(value: &str) -> Vec<u16> {
         value.encode_utf16().chain(Some(0)).collect()
     }
-    fn status(code: i32, operation: &str) -> Result<(), String> {
+    fn status(code: i32, operation: &'static str) -> Result<(), String> {
+        #[cfg(debug_assertions)]
+        if code != 0 {
+            diagnostics::observe(operation, code as u32);
+        }
         if code == 0 {
             Ok(())
         } else if code as u32 == 0x80090036 || code as u32 == 0x800704c7 {
@@ -391,9 +436,20 @@ mod platform {
             }
         }
     }
-    fn existing(name: &str, access: KeyAccess) -> Result<(Owned, Owned), String> {
-        check_name(name)?;
+    fn interactive_provider(hwnd: isize) -> Result<Owned, String> {
         let provider = provider()?;
+        ui(&provider, hwnd)?;
+        Ok(provider)
+    }
+    fn existing(name: &str, access: KeyAccess, hwnd: isize) -> Result<(Owned, Owned), String> {
+        check_name(name)?;
+        // An interactive NCryptOpenKey may itself require provider UI before
+        // a key handle exists. Set its parent/context on the provider first;
+        // key-specific properties are still configured on the returned key.
+        let provider = match access {
+            KeyAccess::PublicOnly => provider()?,
+            KeyAccess::InteractivePrivate => interactive_provider(hwnd)?,
+        };
         let mut h = 0;
         // A silent-opened Passport handle may retain its no-UI context even
         // when NCryptDecrypt itself omits SILENT. Private access must permit
@@ -441,7 +497,7 @@ mod platform {
         configured
     }
     pub fn seal(name: &str, plaintext: &[u8], hwnd: isize) -> Result<Vec<u8>, String> {
-        let (_provider, key) = existing(name, KeyAccess::PublicOnly)?;
+        let (_provider, key) = existing(name, KeyAccess::PublicOnly, hwnd)?;
         ui(&key, hwnd)?;
         // Passport exposes a public RSA key but need not implement public-key
         // encryption itself. Export no private material, and keep all private
@@ -537,7 +593,7 @@ mod platform {
         Ok(result)
     }
     pub fn open(name: &str, ciphertext: &[u8], hwnd: isize) -> Result<Zeroizing<Vec<u8>>, String> {
-        let (_provider, key) = existing(name, KeyAccess::InteractivePrivate)?;
+        let (_provider, key) = existing(name, KeyAccess::InteractivePrivate, hwnd)?;
         ui(&key, hwnd)?;
         set_number(&key, "PinCacheIsGestureRequired", 1)?;
         let mut result = Zeroizing::new(vec![0; RSA_BYTES]);
@@ -586,6 +642,20 @@ mod platform {
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        #[test]
+        fn passport_provider_accepts_ui_owner_before_any_stored_key_is_opened() {
+            #[link(name = "user32")]
+            unsafe extern "system" {
+                fn GetDesktopWindow() -> *mut c_void;
+            }
+            // Set transient provider UI properties only: no stored key is
+            // opened/created, no private operation, and no authentication UI.
+            let owner = unsafe { GetDesktopWindow() } as isize;
+            assert_ne!(owner, 0);
+            let _provider = interactive_provider(owner).unwrap();
+            assert!(interactive_provider(0).is_err());
+        }
 
         #[test]
         fn public_bcrypt_pkcs1_interoperates_with_private_ncrypt_decrypt() {
@@ -737,5 +807,31 @@ mod tests {
         assert!(validate_ciphertext(&[0; 256]).is_ok());
         assert!(validate_ciphertext(&[0; 255]).is_err());
         assert!(validate_ciphertext(&[0; 257]).is_err());
+    }
+    #[cfg(debug_assertions)]
+    #[test]
+    fn diagnostic_observer_is_thread_scoped_and_restored_after_unwind() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static CALLS: AtomicUsize = AtomicUsize::new(0);
+        fn outer(_: &'static str, _: u32) {
+            CALLS.fetch_add(1, Ordering::SeqCst);
+        }
+        fn inner(_: &'static str, _: u32) {
+            CALLS.fetch_add(10, Ordering::SeqCst);
+        }
+        with_failure_observer(outer, || {
+            diagnostics::observe("synthetic", 1);
+            with_failure_observer(inner, || diagnostics::observe("synthetic", 2));
+            diagnostics::observe("synthetic", 3);
+            std::thread::spawn(|| diagnostics::observe("synthetic", 4))
+                .join()
+                .unwrap();
+        });
+        assert_eq!(CALLS.load(Ordering::SeqCst), 12);
+        let _ = std::panic::catch_unwind(|| {
+            with_failure_observer(outer, || panic!("synthetic unwind"))
+        });
+        diagnostics::observe("synthetic", 5);
+        assert_eq!(CALLS.load(Ordering::SeqCst), 12);
     }
 }

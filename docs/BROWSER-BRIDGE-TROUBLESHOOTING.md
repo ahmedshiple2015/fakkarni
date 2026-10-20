@@ -139,3 +139,26 @@ is needed. Repeated Brave acceptance is pending, followed by an Edge regression
 check. Temporary tracing will be removed after the full path is accepted.
 
 Port lifetime behavior follows [Chrome's messaging documentation](https://developer.chrome.com/docs/extensions/develop/concepts/messaging#port-lifetime).
+
+## PIN provider ownership before key opening
+
+The popup handoff improved Brave to four successful cold starts out of five in a
+user test, but did not meet the acceptance gate. The failed run reached the PIN
+provider and returned cancellation. No automatic retry was added: an actual user
+cancellation must continue to stop the request.
+
+Interactive key access now sets the HWND and context on the Passport provider
+before NCryptOpenKey; the returned key still receives its own UI properties before
+decryption. Previously only the key handle had an owner, leaving any key-opening UI
+without one. Provider setup failure stops access. This follows the documented
+[provider UI context during key opening](https://learn.microsoft.com/en-us/windows/win32/seccng/key-storage-property-identifiers).
+
+An opt-in, thread-scoped debug observer now distinguishes provider opening, key
+opening, property setup and private decryption errors using static stages and
+numeric status codes only. It restores its previous observer on return or unwind
+and does nothing in release builds. No keys, payloads or PINs enter the observer.
+
+Nineteen targeted tests passed, including provider-level owner setup without
+opening a stored key, ephemeral software RSA interoperability, observer cleanup,
+enrollment preservation and browser cancellation. Strict Clippy and the desktop
+build passed. Repeated Brave acceptance and an Edge regression check remain pending.
