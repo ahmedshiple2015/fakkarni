@@ -1,7 +1,9 @@
-//! Chrome/Brave Native Messaging host. Never opens or decrypts a vault.
+//! Chromium Native Messaging host. Never opens or decrypts a vault.
 use fakkarni_browser_bridge::{
-    read_frame, request_desktop, write_frame, Request, Response, Status, MAX_NATIVE_REQUEST_BYTES,
+    read_frame, request_desktop, write_frame, Match, Request, Response, Status, MAX_FRAME_BYTES,
+    MAX_NATIVE_REQUEST_BYTES,
 };
+use fakkarni_vault::account_index::{read_index, Index};
 use std::io;
 use std::io::Read;
 
@@ -17,6 +19,22 @@ fn error_response() -> Response {
 }
 
 fn handle(caller: Option<&str>, input: &mut impl io::Read) -> Response {
+    handle_with(
+        caller,
+        input,
+        request_desktop,
+        read_cached_index,
+        launch_desktop,
+    )
+}
+
+fn handle_with(
+    caller: Option<&str>,
+    input: &mut impl io::Read,
+    mut desktop: impl FnMut(&Request) -> io::Result<Response>,
+    mut cache: impl FnMut() -> Option<Index>,
+    mut launch: impl FnMut() -> io::Result<()>,
+) -> Response {
     if caller != Some(EXTENSION_ORIGIN) {
         return error_response();
     }
@@ -29,20 +47,54 @@ fn handle(caller: Option<&str>, input: &mut impl io::Read) -> Response {
     if request.validate().is_err() || fakkarni_vault::validate_origin(request.origin()).is_err() {
         return error_response();
     }
-    let first = request_desktop(&request);
-    if first.is_ok() || !matches!(request, Request::Match { .. } | Request::BeginFill { .. }) {
-        return first.unwrap_or_else(|_| Response::empty(Status::Unavailable));
+    if let Ok(response) = desktop(&request) {
+        return response;
     }
-    if launch_desktop().is_err() {
+    if let Request::Match { origin, .. } = &request {
+        // Merely opening the extension must not start the desktop. Only explicit
+        // opt-in account metadata is available here, never encrypted-vault data.
+        return cached_matches(origin, cache());
+    }
+    if !matches!(request, Request::BeginFill { .. }) || launch().is_err() {
         return Response::empty(Status::Unavailable);
     }
     for _ in 0..30 {
         std::thread::sleep(std::time::Duration::from_millis(100));
-        if let Ok(response) = request_desktop(&request) {
+        if let Ok(response) = desktop(&request) {
             return response;
         }
     }
     Response::empty(Status::Unavailable)
+}
+
+fn read_cached_index() -> Option<Index> {
+    let host = std::env::current_exe().ok()?;
+    let path = host.parent()?.parent()?.join("browser-index.json");
+    read_index(&path)
+}
+
+fn cached_matches(origin: &str, index: Option<Index>) -> Response {
+    let mut response = Response::empty(Status::Locked);
+    if let Some(index) = index.filter(|index| index.settings.show_accounts_when_locked) {
+        response.matches = index
+            .entries
+            .into_iter()
+            .filter(|entry| entry.origin == origin)
+            .take(50)
+            .map(|entry| Match {
+                id: entry.id,
+                title: entry.title,
+                username: entry.username,
+                url: entry.origin,
+            })
+            .collect();
+        // Cached metadata bypasses the desktop pipe's response-size guard.
+        // Enforce the same wire bound here, including JSON escaping overhead.
+        while serde_json::to_vec(&response).is_ok_and(|bytes| bytes.len() > MAX_FRAME_BYTES) {
+            response.matches.pop();
+        }
+    }
+    response
 }
 
 fn launch_desktop() -> io::Result<()> {
@@ -132,6 +184,213 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fakkarni_vault::account_index::{BrowserSettings, IndexEntry};
+
+    fn synthetic_cache() -> Index {
+        Index {
+            settings: BrowserSettings {
+                show_accounts_when_locked: true,
+            },
+            entries: (0..60)
+                .map(|id| IndexEntry {
+                    id: format!("synthetic-{id}"),
+                    title: "Synthetic account".into(),
+                    username: "synthetic@example.test".into(),
+                    origin: "https://example.test".into(),
+                })
+                .collect(),
+        }
+    }
+    fn framed(request: &Request) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        write_frame(&mut bytes, &serde_json::to_vec(request).unwrap()).unwrap();
+        bytes
+    }
+    fn unreachable(_: &Request) -> io::Result<Response> {
+        Err(io::Error::other("Synthetic offline desktop"))
+    }
+
+    #[test]
+    fn closed_desktop_match_uses_only_opt_in_origin_cache_without_launching() {
+        let request = Request::Match {
+            version: 1,
+            origin: "https://example.test".into(),
+        };
+        let bytes = framed(&request);
+        let response = handle_with(
+            Some(EXTENSION_ORIGIN),
+            &mut bytes.as_slice(),
+            unreachable,
+            || Some(synthetic_cache()),
+            || panic!("A match request launched the desktop"),
+        );
+        assert_eq!(response.status, Status::Locked);
+        assert_eq!(response.matches.len(), 50);
+        assert!(response.credential.is_none());
+        assert!(response
+            .matches
+            .iter()
+            .all(|entry| entry.url == "https://example.test"));
+        for origin in [
+            "https://example.test.attacker.test",
+            "https://sub.example.test",
+            "https://example.test:8443",
+        ] {
+            let bytes = framed(&Request::Match {
+                version: 1,
+                origin: origin.into(),
+            });
+            let response = handle_with(
+                Some(EXTENSION_ORIGIN),
+                &mut bytes.as_slice(),
+                unreachable,
+                || Some(synthetic_cache()),
+                || panic!("Match launched desktop"),
+            );
+            assert!(response.matches.is_empty());
+        }
+        for index in [
+            None,
+            Some(Index::default()),
+            Some(Index {
+                settings: BrowserSettings::default(),
+                entries: synthetic_cache().entries,
+            }),
+        ] {
+            let response = handle_with(
+                Some(EXTENSION_ORIGIN),
+                &mut bytes.as_slice(),
+                unreachable,
+                || {
+                    index.as_ref().map(|index| Index {
+                        settings: index.settings.clone(),
+                        entries: index.entries.clone(),
+                    })
+                },
+                || panic!("Match launched desktop"),
+            );
+            assert_eq!(response.status, Status::Locked);
+            assert!(response.matches.is_empty());
+            assert!(response.credential.is_none());
+        }
+    }
+
+    #[test]
+    fn closed_desktop_begin_launches_then_forwards_exact_request_without_cache() {
+        let request = Request::BeginFill {
+            version: 1,
+            origin: "https://example.test".into(),
+            id: "synthetic-account".into(),
+            request_id: "0123456789abcdef0123456789abcdef".into(),
+        };
+        let bytes = framed(&request);
+        let mut attempts = 0;
+        let mut launches = 0;
+        let response = handle_with(
+            Some(EXTENSION_ORIGIN),
+            &mut bytes.as_slice(),
+            |received| {
+                assert_eq!(received, &request);
+                attempts += 1;
+                if attempts == 1 {
+                    unreachable(received)
+                } else {
+                    Ok(Response::empty(Status::Pending))
+                }
+            },
+            || panic!("Begin fill read account cache"),
+            || {
+                launches += 1;
+                Ok(())
+            },
+        );
+        assert_eq!(launches, 1);
+        assert_eq!(attempts, 2);
+        assert_eq!(response.status, Status::Pending);
+        assert!(response.credential.is_none());
+    }
+
+    #[test]
+    fn unauthorized_or_invalid_requests_never_read_cache_or_launch() {
+        for (caller, request) in [
+            (
+                Some("chrome-extension://unapproved/"),
+                Request::Match {
+                    version: 1,
+                    origin: "https://example.test".into(),
+                },
+            ),
+            (
+                Some(EXTENSION_ORIGIN),
+                Request::Match {
+                    version: 1,
+                    origin: "https://example.test/login".into(),
+                },
+            ),
+            (
+                Some(EXTENSION_ORIGIN),
+                Request::Match {
+                    version: 2,
+                    origin: "https://example.test".into(),
+                },
+            ),
+        ] {
+            let bytes = framed(&request);
+            let response = handle_with(
+                caller,
+                &mut bytes.as_slice(),
+                |_| panic!("Invalid caller reached desktop"),
+                || panic!("Invalid caller read cache"),
+                || panic!("Invalid caller launched desktop"),
+            );
+            assert_eq!(response.status, Status::Error);
+        }
+    }
+
+    #[test]
+    fn available_desktop_takes_precedence_and_poll_never_launches() {
+        let bytes = framed(&Request::Match {
+            version: 1,
+            origin: "https://example.test".into(),
+        });
+        let response = handle_with(
+            Some(EXTENSION_ORIGIN),
+            &mut bytes.as_slice(),
+            |_| Ok(Response::empty(Status::Ok)),
+            || panic!("Live desktop fell back to cache"),
+            || panic!("Live desktop was launched again"),
+        );
+        assert_eq!(response.status, Status::Ok);
+        let bytes = framed(&Request::PollFill {
+            version: 1,
+            origin: "https://example.test".into(),
+            request_id: "0123456789abcdef0123456789abcdef".into(),
+        });
+        let response = handle_with(
+            Some(EXTENSION_ORIGIN),
+            &mut bytes.as_slice(),
+            unreachable,
+            || panic!("Poll read cache"),
+            || panic!("Poll launched desktop"),
+        );
+        assert_eq!(response.status, Status::Unavailable);
+    }
+
+    #[test]
+    fn cached_matches_fit_native_frame_after_json_escaping() {
+        let mut index = synthetic_cache();
+        for entry in &mut index.entries {
+            entry.title = "\u{0001}".repeat(1024);
+            entry.username = "\u{0002}".repeat(2048);
+        }
+        let response = cached_matches("https://example.test", Some(index));
+        assert!(!response.matches.is_empty());
+        assert!(response.matches.len() < 50);
+        assert!(response.credential.is_none());
+        let bytes = serde_json::to_vec(&response).unwrap();
+        assert!(bytes.len() <= MAX_FRAME_BYTES);
+        write_frame(&mut Vec::new(), &bytes).unwrap();
+    }
     #[cfg(windows)]
     #[test]
     fn clearing_inheritance_keeps_the_protocol_handle_valid() {

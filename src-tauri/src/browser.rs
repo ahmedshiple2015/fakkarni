@@ -1,37 +1,20 @@
 use crate::{Shared, SharedState};
 use fakkarni_browser_bridge::{Credential, Match, Request, Response, Status};
-use serde::{Deserialize, Serialize};
+pub use fakkarni_vault::account_index::BrowserSettings;
+use fakkarni_vault::account_index::{
+    read_index, Index, IndexEntry, MAX_INDEX_BYTES, MAX_INDEX_ENTRIES,
+};
+use serde::Serialize;
 use std::{
     fs,
-    io::{Read, Write},
+    io::Write,
     path::PathBuf,
     sync::{atomic::Ordering, Arc, Mutex},
     time::{Duration, Instant},
 };
 use tauri::{Emitter, State};
 
-const MAX_INDEX_BYTES: u64 = 512 * 1024;
-const MAX_INDEX_ENTRIES: usize = 512;
 const LIFETIME: Duration = Duration::from_secs(120);
-#[derive(Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct BrowserSettings {
-    pub show_accounts_when_locked: bool,
-}
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct IndexEntry {
-    id: String,
-    title: String,
-    username: String,
-    origin: String,
-}
-#[derive(Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Index {
-    settings: BrowserSettings,
-    entries: Vec<IndexEntry>,
-}
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PendingInfo {
@@ -210,30 +193,6 @@ impl BrowserState {
             .map_err(|_| "Couldn't save browser preferences.")?;
         Ok(())
     }
-}
-fn read_index(path: &std::path::Path) -> Option<Index> {
-    let file = fs::File::open(path).ok()?;
-    let mut bytes = Vec::new();
-    file.take(MAX_INDEX_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .ok()?;
-    if bytes.len() as u64 > MAX_INDEX_BYTES {
-        return None;
-    }
-    let index: Index = serde_json::from_slice(&bytes).ok()?;
-    if index.entries.len() > MAX_INDEX_ENTRIES
-        || (!index.settings.show_accounts_when_locked && !index.entries.is_empty())
-        || index.entries.iter().any(|e| {
-            e.id.is_empty()
-                || e.id.len() > 128
-                || e.title.len() > 1024
-                || e.username.len() > 2048
-                || fakkarni_vault::validate_origin(&e.origin).is_err()
-        })
-    {
-        return None;
-    }
-    Some(index)
 }
 fn matches(vault: &SharedState, state: &BrowserState, origin: &str) -> Response {
     let epoch = vault.epoch.load(Ordering::SeqCst);

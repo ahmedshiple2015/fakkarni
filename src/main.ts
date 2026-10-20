@@ -343,7 +343,7 @@ function browserPreferences() {
   const section = document.createElement("section");
   section.className = "desktop-settings";
   section.setAttribute("aria-label", "Browser privacy settings");
-  section.innerHTML = `<label class="setting-toggle"><span class="setting-copy"><strong>Show accounts while locked</strong><small>See matching browser accounts before unlocking.</small><small id="locked-privacy" class="critical-hint">Names, usernames, and websites are stored outside the encrypted vault. Passwords stay encrypted.</small></span><input type="checkbox" role="switch" class="switch" id="locked-suggestions" aria-label="Show accounts while locked" aria-describedby="locked-privacy" ${browserSettings.showAccountsWhenLocked ? "checked" : ""} ${browserSettingsError ? "disabled" : ""}></label><details class="privacy-disclosure"><summary>About locked account suggestions</summary><p class="hint">Choose an account in Brave or Edge to fill it. Unlock Fakkarni first if needed; forms are never submitted automatically. The local index is an unencrypted file readable by programs running as your Windows user. Passwords and notes stay encrypted. Turning this option off removes the index.</p></details><p id="browser-preferences-status" class="hint" role="status">${esc(browserSettingsError || "")}</p>`;
+  section.innerHTML = `<label class="setting-toggle"><span class="setting-copy"><strong>Show accounts while locked</strong><small>See accounts after restarting your PC, even when Fakkarni is closed.</small><small id="locked-privacy" class="critical-hint">Names, usernames, and websites are stored outside the encrypted vault. Passwords stay encrypted.</small></span><input type="checkbox" role="switch" class="switch" id="locked-suggestions" aria-label="Show accounts while locked" aria-describedby="locked-privacy" ${browserSettings.showAccountsWhenLocked ? "checked" : ""} ${browserSettingsError ? "disabled" : ""}></label><details class="privacy-disclosure"><summary>About locked account suggestions</summary><p class="hint">Enable this once while unlocked to keep a local list of accounts. Choose Unlock &amp; fill in Brave or Edge to open Fakkarni if closed, unlock, and fill automatically. Forms are never submitted automatically. The local index is an unencrypted file readable by programs running as your Windows user. Passwords and notes stay encrypted. Turning this option off removes the index.</p></details><p id="browser-preferences-status" class="hint" role="status">${esc(browserSettingsError || "")}</p>`;
   document.querySelector("#security-settings")!.append(section);
   const checkbox = section.querySelector<HTMLInputElement>("#locked-suggestions")!;
   checkbox.addEventListener("change", async () => {
@@ -355,7 +355,7 @@ function browserPreferences() {
       await invoke("set_browser_settings", { settings });
       if (generation !== epoch || !section.isConnected) return;
       browserSettings = settings;
-      feedback.textContent = settings.showAccountsWhenLocked ? "Local account index enabled. Passwords still require vault unlock." : "Locked account index removed.";
+      feedback.textContent = settings.showAccountsWhenLocked ? "Accounts are available before unlocking and after restart. Passwords still require vault unlock." : "Locked account index removed.";
     } catch (error) {
       if (generation !== epoch || !section.isConnected) return;
       checkbox.checked = browserSettings.showAccountsWhenLocked;

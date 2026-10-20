@@ -1,5 +1,6 @@
 //! Local vault operations. No network, clipboard, or browser access.
 use fs2::FileExt;
+pub mod account_index;
 mod backup;
 mod credentials;
 mod matching;

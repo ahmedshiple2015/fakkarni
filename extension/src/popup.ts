@@ -124,7 +124,7 @@ async function load() {
     if (response.status === "locked") {
       setConnection("locked", "Vault locked");
       if (!response.matches.length) {
-        setState("Unlock your vault in the desktop app, then refresh. To show accounts while locked, enable locked account suggestions in desktop preferences.");
+        setState("To see accounts before unlocking, enable “Show accounts while locked” once in Fakkarni Settings. The account list then stays available after restarting your PC, even when the app is closed.");
         return;
       }
     }
@@ -159,6 +159,7 @@ async function load() {
       title.textContent = match.title || "Untitled login";
       const username = document.createElement("span");
       username.textContent = match.username || "No username";
+      username.title = match.username || "No username";
       copy.append(title, username);
       const button = document.createElement("button");
       button.type = "button";
@@ -166,7 +167,8 @@ async function load() {
       const action = document.createElement("small");
       action.className = "fill-action";
       const actionLabel = document.createElement("span");
-      actionLabel.textContent = "Fill";
+      const fillLabel = response.status === "locked" ? "Unlock & fill" : "Fill";
+      actionLabel.textContent = fillLabel;
       action.append(actionLabel);
       if (response.status === "locked") button.setAttribute("aria-label", `Unlock and fill ${match.title || "Untitled login"}, ${match.username || "No username"}`);
       button.append(icon, copy);
@@ -207,7 +209,7 @@ async function load() {
           if (current === generation) {
             button.disabled = false;
             button.removeAttribute("aria-busy");
-            actionLabel.textContent = "Fill";
+            actionLabel.textContent = fillLabel;
           }
         }
       });
