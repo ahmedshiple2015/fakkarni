@@ -114,7 +114,28 @@ A first successful PIN test was followed by intermittent failures in both browse
 The more precise trace identified `pin_owner_input_changed`: global input ticks
 include mouse movement, which incorrectly cancelled startup. The desktop now checks
 the actual foreground owner instead and cancels if another app or browser window
-has focus. Temporary stage tracing remains enabled in this debug build while
-repeated cold-start autofill acceptance is pending. A successful build alone is not
+has focus. The user confirmed two consecutive cold starts in Brave, including
+first-click PIN and automatic filling, but later reported more intermittent Brave
+failures. Edge cold starts were reported working. Temporary stage tracing remains
+enabled in this debug build during acceptance. A successful build alone is not
 proof that the browser uses that build: verify the installed executable in the
 normal desktop session.
+
+## Close the extension popup before native PIN handoff
+
+The account popup previously remained open after acknowledging a fill, overlapping
+native startup and PIN UI. The extension now uses a named runtime port: the worker
+validates and queues the exact tab/document, acknowledges the selection, and the
+popup closes automatically. Native BeginFill waits for the accepted popup's actual
+disconnect, rather than a timer. A view closed before acceptance cannot trigger a
+delayed prompt. Navigation, duplicate messages, malformed acknowledgements and
+worker disconnection remain guarded; PIN cancellation never retries a prompt.
+
+All 30 extension tests and the synthetic rendered popup check passed. Checks cover
+the close barrier, original-document binding, early disconnect, rejected handoffs,
+repeat fills, locked/unlocked labels, no external requests and no overflow. Reload
+the unpacked extension to use the new worker; no desktop rebuild or bridge repair
+is needed. Repeated Brave acceptance is pending, followed by an Edge regression
+check. Temporary tracing will be removed after the full path is accepted.
+
+Port lifetime behavior follows [Chrome's messaging documentation](https://developer.chrome.com/docs/extensions/develop/concepts/messaging#port-lifetime).

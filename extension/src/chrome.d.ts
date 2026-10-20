@@ -11,6 +11,7 @@ declare const chrome:
         }): Promise<FakkarniTab[]>;
       };
       runtime: {
+        connect(options: {name: string}): import("./handoff.js").FillPort;
         sendNativeMessage(host: string, message: unknown): Promise<unknown>;
         sendMessage(message: unknown): Promise<unknown>;
       };

@@ -152,6 +152,7 @@ test("worker responds synchronously before starting either native handoff, inclu
     f.api.runtime.id="extension-id";
     f.api.runtime.getURL=path=>`chrome-extension://extension-id/${path}`;
     f.api.runtime.onMessage={addListener:callback=>{listener=callback;}};
+    f.api.runtime.onConnect={addListener:()=>{}};
     f.api.tabs.onUpdated={addListener:()=>{}};
     f.api.tabs.onRemoved={addListener:()=>{}};
     installWorker(f.api);
@@ -164,4 +165,86 @@ test("worker responds synchronously before starting either native handoff, inclu
     await f.done;
     assert.equal(f.injections.length,1);
   }
+});
+
+test("native unlock waits for popup closure and revalidates the queued document",async()=>{
+  const f=fixture();
+  let closed;
+  const barrier=new Promise(resolve=>{closed=resolve;});
+  assert.deepEqual(await f.coordinator.start(message,barrier),{ok:true});
+  await settle();
+  assert.equal(f.calls.length,0,"no native call while the popup owns focus");
+  closed(true); await f.done;
+  assert.equal(f.calls[0].action,"begin_fill");
+  assert.equal(f.injections.length,1);
+
+  const stale=fixture();
+  let release;
+  const pending=new Promise(resolve=>{release=resolve;});
+  await stale.coordinator.start(message,pending);
+  stale.coordinator.invalidate(3);
+  release(true); await stale.done; await settle();
+  assert.equal(stale.calls.some(call=>call.action==="begin_fill"),false);
+  assert.equal(stale.injections.length,0);
+});
+
+test("popup port acknowledges an exact selection before disconnect starts native unlock",async()=>{
+  const f=fixture();
+  let connect;
+  Object.assign(f.api.runtime,{
+    id:"extension-id",getURL:path=>`chrome-extension://extension-id/${path}`,
+    onConnect:{addListener:callback=>{connect=callback;}},
+    onMessage:{addListener:()=>{}},
+  });
+  f.api.tabs.onUpdated={addListener:()=>{}};
+  f.api.tabs.onRemoved={addListener:()=>{}};
+  installWorker(f.api);
+  let receive,disconnect;
+  const replies=[];
+  const port={name:"fakkarni-fill",sender:{id:"extension-id",url:f.api.runtime.getURL("popup.html")},
+    onMessage:{addListener:callback=>{receive=callback;}},
+    onDisconnect:{addListener:callback=>{disconnect=callback;}},
+    postMessage:reply=>replies.push(reply),disconnect:()=>{throw Error("trusted port rejected");}};
+  connect(port); receive(message); receive(message);
+  await settle();
+  assert.deepEqual(replies,[{ok:true}]);
+  assert.equal(f.calls.length,0);
+  disconnect(); await f.done;
+  assert.equal(f.calls.filter(call=>call.action==="begin_fill").length,1);
+  assert.equal(f.injections.length,1);
+  let rejected=0;
+  connect({...port,sender:{id:"extension-id",url:"https://example.com/login"},disconnect:()=>rejected++});
+  assert.equal(rejected,1);
+});
+
+test("closing or timing out before acceptance cannot start a delayed PIN prompt",async()=>{
+  const f=fixture();
+  assert.deepEqual(await f.coordinator.start(message,Promise.resolve(false)),{ok:true});
+  await f.done; await settle();
+  assert.equal(f.calls.some(call=>call.action==="begin_fill"),false);
+  assert.equal(f.injections.length,0);
+});
+
+test("popup disappearing during validation aborts the worker handoff",async()=>{
+  const f=fixture();
+  let connect,completeValidation,receive,disconnect;
+  const tab={id:3,windowId:4,url:message.url};
+  f.api.tabs.query=()=>new Promise(resolve=>{completeValidation=()=>resolve([tab]);});
+  Object.assign(f.api.runtime,{
+    id:"extension-id",getURL:path=>`chrome-extension://extension-id/${path}`,
+    onConnect:{addListener:callback=>{connect=callback;}},onMessage:{addListener:()=>{}},
+  });
+  f.api.tabs.onUpdated={addListener:()=>{}};
+  f.api.tabs.onRemoved={addListener:()=>{}};
+  installWorker(f.api);
+  const replies=[];
+  connect({name:"fakkarni-fill",sender:{id:"extension-id",url:f.api.runtime.getURL("popup.html")},
+    onMessage:{addListener:callback=>{receive=callback;}},
+    onDisconnect:{addListener:callback=>{disconnect=callback;}},
+    postMessage:reply=>replies.push(reply),disconnect:()=>{}});
+  receive(message); disconnect(); completeValidation();
+  await f.done; await settle();
+  assert.deepEqual(replies,[]);
+  assert.equal(f.calls.some(call=>call.action==="begin_fill"),false);
+  assert.equal(f.injections.length,0);
 });

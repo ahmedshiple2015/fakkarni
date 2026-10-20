@@ -3,12 +3,17 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright, expect
 
 MOCK = r"""(() => {
-  window.__qa = {status:'locked',matches:[{id:'synthetic',title:'Example account',username:'synthetic.person@example.test',url:'https://example.test'}],fills:[]};
+  window.__qa = {status:'locked',matches:[{id:'synthetic',title:'Example account',username:'synthetic.person@example.test',url:'https://example.test'}],fills:[],closes:0,accept:true};
+  window.close=()=>{window.__qa.closes++;};
   window.chrome = {
     tabs:{query:async()=>[{id:42,url:'https://example.test/login'}]},
     runtime:{
       sendNativeMessage:async()=>({version:1,status:window.__qa.status,matches:window.__qa.matches}),
-      sendMessage:async(msg)=>{window.__qa.fills.push(msg);return {ok:true};}
+      connect:()=>{
+        let receive,closed;
+        return {onMessage:{addListener:cb=>receive=cb},onDisconnect:{addListener:cb=>closed=cb},
+          disconnect:()=>closed(),postMessage:msg=>{window.__qa.fills.push(msg);queueMicrotask(()=>receive({ok:window.__qa.accept}));}};
+      }
     }
   };
 })();"""
@@ -35,6 +40,7 @@ with sync_playwright() as p:
     expect(page.locator('.fill-action > span')).to_have_text('Unlock & fill')
     assert page.evaluate('window.__qa.fills.length') == 1
     assert page.evaluate('window.__qa.fills[0].id') == 'synthetic'
+    assert page.evaluate('window.__qa.closes') == 1
     page.evaluate("window.__qa.status='ok'")
     page.locator('#refresh').click()
     expect(page.locator('#connection')).to_have_text('Unlocked')
@@ -42,6 +48,11 @@ with sync_playwright() as p:
     page.locator('.account-button').click()
     expect(page.locator('.fill-action > span')).to_have_text('Fill')
     assert page.evaluate('window.__qa.fills.length') == 2
+    assert page.evaluate('window.__qa.closes') == 2
+    page.evaluate('window.__qa.accept=false')
+    page.locator('.account-button').click()
+    expect(page.locator('#state')).to_contain_text('could not start')
+    assert page.evaluate('window.__qa.closes') == 2
     page.evaluate("window.__qa.status='locked';window.__qa.matches=[]")
     page.locator('#refresh').click()
     expect(page.locator('#state')).to_contain_text('enable “Show accounts while locked” once')

@@ -1,5 +1,6 @@
 import { httpsOrigin, validateCredential, validateResponse } from "./validators.js";
 import { fillLogin } from "./fill.js";
+import type { FillPort } from "./handoff.js";
 
 type Tab = { id?: number; url?: string; windowId?: number };
 type Api = {
@@ -17,6 +18,7 @@ type Api = {
     id: string; getURL(path: string): string;
     sendNativeMessage(host: string, message: unknown): Promise<unknown>;
     onMessage: {addListener(callback: (message: unknown, sender: {id?: string; url?: string}, respond: (response: unknown) => void) => boolean): void};
+    onConnect: {addListener(callback: (port: FillPort & {name: string; sender?: {id?: string; url?: string}}) => void): void};
   };
 };
 declare const chrome: Api | undefined;
@@ -40,9 +42,11 @@ export function createCoordinator(api: Api, wait = (ms: number) => new Promise<v
   async function indicator(task: Pending, text: string, title: string) {
     try { await api.action.setBadgeText({tabId: task.tabId, text}); await api.action.setTitle({tabId: task.tabId, title}); } catch { /* Tab may have closed. */ }
   }
-  async function run(task: Pending, id: string) {
+  async function run(task: Pending, id: string, popupClosed: Promise<boolean>) {
     let delivered = false;
     try {
+      if (!await popupClosed) return;
+      if (!await current(task)) return;
       const begun = validateResponse(await api.runtime.sendNativeMessage(host, {version: 1, action: "begin_fill", origin: task.origin, id, request_id: task.requestId}));
       if (!begun || begun.status !== "pending") throw new Error("request_failed");
       await indicator(task, "…", "Fakkarni: filling; unlock the desktop vault if needed");
@@ -84,7 +88,7 @@ export function createCoordinator(api: Api, wait = (ms: number) => new Promise<v
     }
   }
   return {
-    async start(message: unknown): Promise<{ok: boolean}> {
+    async start(message: unknown, popupClosed: Promise<boolean> = Promise.resolve(true)): Promise<{ok: boolean}> {
       if (!isRecord(message) || message.action !== "fill_account" || typeof message.id !== "string" || !message.id || message.id.length > 128 ||
           typeof message.tabId !== "number" || !Number.isInteger(message.tabId) || typeof message.url !== "string") return {ok: false};
       const generation = ++startGeneration;
@@ -99,7 +103,7 @@ export function createCoordinator(api: Api, wait = (ms: number) => new Promise<v
       const requestId = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2,"0")).join("");
       const task: Pending = {tabId: tab.id, url: tab.url, origin, documentId, requestId, cancelled: false};
       pending = task;
-      void run(task, message.id);
+      void run(task, message.id, popupClosed);
       return {ok: true};
     },
     invalidate(tabId: number) { if (pending?.tabId === tabId) void cancel(pending); },
@@ -111,6 +115,31 @@ export function installWorker(api: Api) {
   const coordinator = createCoordinator(api);
   api.tabs.onUpdated.addListener((id, change) => { if (change.url !== undefined || change.status === "loading") coordinator.invalidate(id); });
   api.tabs.onRemoved.addListener(id => coordinator.invalidate(id));
+  api.runtime.onConnect.addListener(port => {
+    if (port.name !== "fakkarni-fill" || port.sender?.id !== api.runtime.id ||
+        port.sender.url !== api.runtime.getURL("popup.html")) {
+      port.disconnect();
+      return;
+    }
+    let release!: (accepted: boolean) => void;
+    const popupClosed = new Promise<boolean>(resolve => { release = resolve; });
+    let accepted = false;
+    let disconnected = false;
+    port.onDisconnect.addListener(() => { disconnected = true; release(accepted); });
+    let handled = false;
+    port.onMessage.addListener(message => {
+      if (handled) return;
+      handled = true;
+      // Validate and remember the exact tab/document before accepting. Native
+      // launch and PIN UI wait for the view's actual disconnect, not a delay.
+      void coordinator.start(message, popupClosed).then(result => {
+        if (disconnected) return;
+        try { port.postMessage(result); accepted = result.ok; } catch { /* Popup already closed. */ }
+      }, () => {
+        try { port.postMessage({ok: false}); } catch { /* Popup already closed. */ }
+      });
+    });
+  });
   api.runtime.onMessage.addListener((message, sender, respond) => {
     if (sender.id !== api.runtime.id || sender.url !== api.runtime.getURL("popup.html")) return false;
     if (!isRecord(message) || message.action !== "fill_account" || typeof message.tabId !== "number") {

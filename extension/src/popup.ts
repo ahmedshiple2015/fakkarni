@@ -1,5 +1,6 @@
 import { httpsOrigin, validateResponse } from "./validators.js";
 import { initialFor, resolveBrandIcon } from "./brand-icons.js";
+import { queueFill } from "./handoff.js";
 
 const host = "org.fakkarni.bridge";
 const browserName = /Edg\//.test(navigator.userAgent) ? "Edge" : "Brave";
@@ -191,17 +192,20 @@ async function load() {
         button.setAttribute("aria-busy", "true");
         actionLabel.textContent = "Starting…";
         try {
-          const result = await api.runtime.sendMessage({action: "fill_account", tabId: tab.id, url: tab.url, id: match.id});
+          const accepted = await queueFill(() => api.runtime.connect({name: "fakkarni-fill"}),
+            {action: "fill_account", tabId: tab.id, url: tab.url, id: match.id});
           if (current !== generation) return;
-          setState(result && typeof result === "object" && "ok" in result && result.ok === true
-            ? "Filling this account. Unlock Fakkarni if needed; filling continues when this popup closes."
-            : "The page changed or filling could not start. Refresh and try again.");
+          if (accepted) {
+            window.close();
+          } else {
+            setState("The page changed or filling could not start. Refresh and try again.");
+          }
         } catch (error) {
           if (current !== generation) return;
           const message = error instanceof Error ? error.message : "";
           if (/message (port|channel) closed|before a response|asynchronous response/i.test(message))
             setState("The popup closed during handoff. Check whether the form filled, then reopen this popup to retry if needed. (HANDOFF_CLOSED)");
-          else if (/receiving end does not exist|could not establish connection|context invalidated/i.test(message))
+          else if (/receiving end does not exist|could not establish connection|context invalidated|background connection closed|handoff timed out/i.test(message))
             setState("The extension background connection is unavailable. Reload Fakkarni at the browser’s extensions page. (WORKER_UNAVAILABLE)");
           else setState("The browser could not send the fill request. Reopen this popup and retry. (REQUEST_FAILED)");
         }
