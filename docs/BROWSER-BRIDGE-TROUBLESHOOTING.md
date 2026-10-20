@@ -174,8 +174,13 @@ check passed. One parallel run of the existing pipe integration test encountered
 an EOF on request 17; its isolated rerun and full serial rerun passed. Keep that
 intermittent transport test on the release-hardening follow-up list.
 
-The final build is installed. A final cold-start regression check in both browsers
-is pending; the five-attempt Brave check passed before diagnostic removal.
+The final build is installed. User acceptance is complete for this cold-start
+PIN/autofill fix: Brave passed five consecutive cold starts, and the final Edge
+check passed after reloading its extension. Edge's intervening WORKER_UNAVAILABLE
+message came from the popup/background handoff rather than bridge registration;
+Brave had been reloaded for the port update, but Edge still needed its own reload.
+No additional bridge repair was needed. The temporary diagnostic code remains
+removed. This acceptance does not mark the master-password/recovery phases done.
 Deletion of the old `target/debug/fakkarni-unlock-trace.json` artifact was rejected
 by automatic approval review with only "blocked by policy" as the reason. It
 contains static stages/status codes only and is no longer updated by the app.

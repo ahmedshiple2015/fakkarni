@@ -111,3 +111,9 @@ Status: queued.
 Package an installer with stable executable paths and Brave/Edge bridge registration;
 verify upgrade, uninstall, startup/tray, and clean-PC behavior. Perform a focused
 security review before treating the app as ready for important credentials.
+
+Follow-up from cold-start autofill verification (2026-10-20): investigate an
+intermittent EOF in the parallel named-pipe integration test. Its isolated and
+full serial reruns passed. Include explicit extension-worker reload/update checks
+in upgrade testing so popup and background code cannot be mistaken for a broken
+native registration.
