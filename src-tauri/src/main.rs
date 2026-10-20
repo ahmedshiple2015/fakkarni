@@ -350,6 +350,12 @@ fn main() {
                 data_dir.join("browser-index.json"),
             ));
             app.manage(browser_state.clone());
+            // Complete startup before accepting any browser request. In
+            // particular, cold-start PIN requests must not race session/tray setup.
+            #[cfg(windows)]
+            windows_lock::start(vault.clone(), app.handle().clone())
+                .map_err(std::io::Error::other)?;
+            lifecycle::init(app)?;
             #[cfg(windows)]
             {
                 let browser_vault = vault.clone();
@@ -365,9 +371,6 @@ fn main() {
                 })?;
                 app.manage(bridge);
             }
-            #[cfg(windows)]
-            windows_lock::start(vault.clone(), app.handle().clone())
-                .map_err(std::io::Error::other)?;
             let handle = app.handle().clone();
             std::thread::spawn(move || {
                 let mut previously_unlocked = false;
@@ -397,7 +400,6 @@ fn main() {
                     backup_state.expire();
                 }
             });
-            lifecycle::init(app)?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

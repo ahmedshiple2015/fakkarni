@@ -135,11 +135,34 @@ impl PromptOwner {
 /// authentication calls show_main.
 pub(super) fn begin(app: &tauri::AppHandle, request_id: String) {
     let vault = app.state::<Shared>().inner().clone();
+    let epoch = vault.epoch.load(Ordering::SeqCst);
+    let browser = app.state::<Arc<BrowserState>>().inner().clone();
+    let queued_app = app.clone();
+    let queued_request = request_id.clone();
+    // The IPC thread can run while Tauri's event loop is still starting. Claim
+    // and capture the prompt owner only once that loop can dispatch UI work.
+    if app
+        .run_on_main_thread(move || {
+            if !vault.blocked() && vault.epoch.load(Ordering::SeqCst) == epoch {
+                begin_ready(&queued_app, queued_request, epoch);
+            } else {
+                queued_app
+                    .state::<Arc<BrowserState>>()
+                    .cancel_waiting(&queued_request);
+            }
+        })
+        .is_err()
+    {
+        browser.cancel_waiting(&request_id);
+    }
+}
+
+fn begin_ready(app: &tauri::AppHandle, request_id: String, epoch: u64) {
+    let vault = app.state::<Shared>().inner().clone();
     let browser = app.state::<Arc<BrowserState>>().inner().clone();
     if !browser.claim_unlock(&request_id) {
         return;
     }
-    let epoch = vault.epoch.load(Ordering::SeqCst);
     #[cfg(windows)]
     let Some(owner) = PromptOwner::capture() else {
         browser.cancel_waiting(&request_id);

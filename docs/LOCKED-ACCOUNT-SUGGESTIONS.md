@@ -88,3 +88,17 @@ ignored. Strict workspace Clippy, seven desktop form tests, 23 extension tests,
 the frontend and desktop builds, and the synthetic native-event UI check passed.
 Tests never opened a real vault or PIN prompt. Actual Windows prompt placement,
 cold-start behavior, cancellation, and fallback remain awaiting user acceptance.
+
+Cold-start follow-up (2026-10-20): a first-click failure exposed startup ordering:
+the bridge listener was available before session/lifecycle initialization finished,
+and the PIN worker could run before the GUI event loop was ready. Startup now
+initializes session monitoring and lifecycle before exposing IPC; the original
+request's PIN handoff is queued onto the GUI loop, retaining its epoch and pending
+request checks. The native host also waits up to ten seconds for desktop readiness
+instead of abandoning startup after three seconds. It launches once and forwards
+the same selection throughout that wait.
+
+All 33 desktop and ten native-host tests passed, including a simulated startup
+longer than the old three-second limit. Strict workspace Clippy and both builds
+passed. Real first-click prompting with the app fully quit remains awaiting user
+acceptance; the updated native host must be installed with the desktop repair launcher.

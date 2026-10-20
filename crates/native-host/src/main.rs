@@ -58,7 +58,10 @@ fn handle_with(
     if !matches!(request, Request::BeginFill { .. }) || launch().is_err() {
         return Response::empty(Status::Unavailable);
     }
-    for _ in 0..30 {
+    // Cold Tauri/WebView startup can exceed three seconds on an ordinary PC.
+    // Keep this same explicit account request alive while the desktop gets ready.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(100));
         if let Ok(response) = desktop(&request) {
             return response;
@@ -306,6 +309,39 @@ mod tests {
         );
         assert_eq!(launches, 1);
         assert_eq!(attempts, 2);
+        assert_eq!(response.status, Status::Pending);
+        assert!(response.credential.is_none());
+    }
+
+    #[test]
+    fn cold_start_keeps_first_selection_past_the_old_three_second_deadline() {
+        let request = Request::BeginFill {
+            version: 1,
+            origin: "https://example.test".into(),
+            id: "synthetic-account".into(),
+            request_id: "0123456789abcdef0123456789abcdef".into(),
+        };
+        let bytes = framed(&request);
+        let started = std::time::Instant::now();
+        let mut launches = 0;
+        let response = handle_with(
+            Some(EXTENSION_ORIGIN),
+            &mut bytes.as_slice(),
+            |received| {
+                assert_eq!(received, &request);
+                if started.elapsed() < std::time::Duration::from_millis(3200) {
+                    unreachable(received)
+                } else {
+                    Ok(Response::empty(Status::Pending))
+                }
+            },
+            || panic!("Begin fill read account cache"),
+            || {
+                launches += 1;
+                Ok(())
+            },
+        );
+        assert_eq!(launches, 1);
         assert_eq!(response.status, Status::Pending);
         assert!(response.credential.is_none());
     }
