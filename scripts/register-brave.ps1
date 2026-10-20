@@ -4,6 +4,7 @@ param(
     [string]$DesktopPath = (Join-Path (Split-Path $PSScriptRoot -Parent) 'target\debug\fakkarni.exe')
 )
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'native-host-registration.ps1')
 $projectRoot = Split-Path $PSScriptRoot -Parent
 $identity = Get-Content -Raw (Join-Path $projectRoot 'extension\identity.json') | ConvertFrom-Json
 if ($identity.extensionId -notmatch '^[a-p]{32}$' -or $identity.nativeHost -ne 'org.fakkarni.bridge') {
@@ -75,12 +76,7 @@ try {
         'HKCU:\Software\Google\Chrome\NativeMessagingHosts\org.fakkarni.bridge'
     )
     if ($Browser -eq 'Edge') { $registryPaths = @('HKCU:\Software\Microsoft\Edge\NativeMessagingHosts\org.fakkarni.bridge') }
-    foreach ($registryPath in $registryPaths) {
-        if (-not (Test-Path -LiteralPath $registryPath)) { New-Item -Path $registryPath | Out-Null }
-        $key = Get-Item -LiteralPath $registryPath
-        if ($key.GetValue('') -cne $manifestPath) { $key.SetValue('', $manifestPath, [Microsoft.Win32.RegistryValueKind]::String) }
-        if ($key.GetValue('') -cne $manifestPath) { throw 'Could not verify Fakkarni native host registration.' }
-    }
+    Set-FakkarniNativeHostRegistration -RegistryPaths $registryPaths -ManifestPath $manifestPath
 } finally {
     if ($gateHeld) { $registrationGate.ReleaseMutex() }
     $registrationGate.Dispose()

@@ -4,7 +4,7 @@ $root = Split-Path $PSScriptRoot -Parent
 $identity = Get-Content -Raw (Join-Path $root 'extension\identity.json') | ConvertFrom-Json
 $destination = Join-Path $env:LOCALAPPDATA 'org.fakkarni.desktop\native-messaging'
 $expectedManifest = Join-Path $destination 'org.fakkarni.bridge.json'
-$result = [ordered]@{ extensionId = $identity.extensionId; registry = @(); manifestExists = (Test-Path -LiteralPath $expectedManifest); manifestValid = $false; hostExists = $false; hostMatchesBuild = $null; desktopExists = $false; probe = 'Not requested' }
+$result = [ordered]@{ extensionId = $identity.extensionId; manifestPath = $expectedManifest; registry = @(); manifestExists = (Test-Path -LiteralPath $expectedManifest); manifestValid = $false; hostExists = $false; hostMatchesBuild = $null; desktopExists = $false; probe = 'Not requested' }
 foreach ($browser in @('BraveSoftware\Brave-Browser', 'Google\Chrome', 'Microsoft\Edge')) {
     foreach ($view in @([Microsoft.Win32.RegistryView]::Registry32, [Microsoft.Win32.RegistryView]::Registry64)) {
         $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::CurrentUser, $view)
