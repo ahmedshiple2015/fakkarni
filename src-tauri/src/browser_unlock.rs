@@ -20,10 +20,7 @@ fn capture_owner(request_id: &str) -> Option<PromptOwner> {
         .ok()?
         .take();
     if let Some(hint) = hint {
-        crate::unlock_trace::record("pin_startup_owner_received");
-        hint.restore(request_id)
-            .inspect_err(|error| crate::unlock_trace::record(error.stage()))
-            .ok()
+        hint.restore(request_id).ok()
     } else {
         PromptOwner::capture()
     }
@@ -79,7 +76,6 @@ fn attempt<T>(
 /// still owns the foreground. Neither acquiring its HWND nor successful Hello
 /// authentication calls show_main.
 pub(super) fn begin(app: &tauri::AppHandle, request_id: String) {
-    crate::unlock_trace::record("pin_dispatch_queued");
     let vault = app.state::<Shared>().inner().clone();
     let epoch = vault.epoch.load(Ordering::SeqCst);
     let browser = app.state::<Arc<BrowserState>>().inner().clone();
@@ -89,11 +85,9 @@ pub(super) fn begin(app: &tauri::AppHandle, request_id: String) {
     // and capture the prompt owner only once that loop can dispatch UI work.
     if app
         .run_on_main_thread(move || {
-            crate::unlock_trace::record("pin_dispatch_running");
             if !vault.blocked() && vault.epoch.load(Ordering::SeqCst) == epoch {
                 begin_ready(&queued_app, queued_request, epoch);
             } else {
-                crate::unlock_trace::record("pin_dispatch_revoked");
                 queued_app
                     .state::<Arc<BrowserState>>()
                     .cancel_waiting(&queued_request);
@@ -101,7 +95,6 @@ pub(super) fn begin(app: &tauri::AppHandle, request_id: String) {
         })
         .is_err()
     {
-        crate::unlock_trace::record("pin_dispatch_failed");
         browser.cancel_waiting(&request_id);
     }
 }
@@ -110,65 +103,36 @@ fn begin_ready(app: &tauri::AppHandle, request_id: String, epoch: u64) {
     let vault = app.state::<Shared>().inner().clone();
     let browser = app.state::<Arc<BrowserState>>().inner().clone();
     if !browser.claim_unlock(&request_id) {
-        crate::unlock_trace::record("pin_claim_rejected");
         return;
     }
-    crate::unlock_trace::record("pin_claimed");
     #[cfg(windows)]
     let Some(owner) = capture_owner(&request_id) else {
-        crate::unlock_trace::record("pin_owner_invalid");
         browser.cancel_waiting(&request_id);
         return;
     };
-    crate::unlock_trace::record("pin_owner_captured");
     let hello = app.state::<HelloState>();
     let manager = hello.manager();
     let gate = hello.credential_gate();
     let app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        crate::unlock_trace::record("pin_worker_started");
         let Ok(_guard) = gate.try_lock() else {
-            crate::unlock_trace::record("pin_gate_busy");
             // An existing Hello operation owns the verification UI. Do not open
             // a second prompt or surface the vault as an accidental fallback.
             browser.cancel_waiting(&request_id);
             return;
         };
         let current = || {
-            if vault.blocked() {
-                crate::unlock_trace::record("pin_request_os_blocked");
-                return false;
-            }
-            if vault.epoch.load(Ordering::SeqCst) != epoch {
-                crate::unlock_trace::record("pin_request_epoch_changed");
-                return false;
-            }
-            if !browser.is_waiting(&request_id) {
-                crate::unlock_trace::record("pin_request_not_waiting");
-                return false;
-            }
-            true
+            !vault.blocked()
+                && vault.epoch.load(Ordering::SeqCst) == epoch
+                && browser.is_waiting(&request_id)
         };
         let outcome = attempt(
             current,
             || {
-                crate::unlock_trace::record("pin_enrollment_check");
-                if !manager.enabled().inspect_err(|error| {
-                    crate::unlock_trace::failure("pin_enrollment_error", error)
-                })? {
-                    crate::unlock_trace::record("pin_not_enrolled");
+                if !manager.enabled()? {
                     return Ok(false);
                 }
-                crate::unlock_trace::record("pin_enrolled");
                 fakkarni_windows_hello::availability()
-                    .inspect(|available| {
-                        crate::unlock_trace::record(if *available {
-                            "pin_provider_available"
-                        } else {
-                            "pin_provider_unavailable"
-                        })
-                    })
-                    .inspect_err(|error| crate::unlock_trace::failure("pin_provider_error", error))
             },
             || {
                 #[cfg(windows)]
@@ -177,16 +141,9 @@ fn begin_ready(app: &tauri::AppHandle, request_id: String, epoch: u64) {
                     // was checked. Treat a stale owner as cancellation, rather
                     // than showing a prompt attached to an unrelated window.
                     if !owner.still_foreground() {
-                        crate::unlock_trace::record("pin_owner_changed_before_prompt");
                         return Err(HELLO_CANCELLED.into());
                     }
-                    crate::unlock_trace::record("pin_prompt_started");
-                    fakkarni_windows_hello::with_failure_observer(
-                        crate::unlock_trace::provider_failure,
-                        || manager.unlock(owner.hwnd),
-                    )
-                    .inspect(|_| crate::unlock_trace::record("pin_prompt_verified"))
-                    .inspect_err(|error| crate::unlock_trace::failure("pin_prompt_error", error))
+                    manager.unlock(owner.hwnd)
                 }
                 #[cfg(not(windows))]
                 {
@@ -194,19 +151,9 @@ fn begin_ready(app: &tauri::AppHandle, request_id: String, epoch: u64) {
                 }
             },
             |secret| {
-                crate::unlock_trace::record("pin_vault_unlock_started");
                 crate::hello::unlock_browser_secret(&vault, epoch, &browser, &request_id, secret)
-                    .inspect_err(|error| {
-                        crate::unlock_trace::failure("pin_vault_unlock_error", error)
-                    })
             },
         );
-        crate::unlock_trace::record(match outcome {
-            Outcome::Completed => "pin_completed",
-            Outcome::Fallback => "pin_fallback",
-            Outcome::Cancelled => "pin_cancelled",
-            Outcome::Stale => "pin_stale",
-        });
         match outcome {
             Outcome::Completed => {
                 if vault.blocked() || vault.epoch.load(Ordering::SeqCst) != epoch {

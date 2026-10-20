@@ -324,15 +324,8 @@ pub fn handle(
             request_id,
             ..
         } => {
-            crate::unlock_trace::record("begin_fill_received");
             let response = matches(vault, state, &origin);
-            crate::unlock_trace::record(match response.status {
-                Status::Locked => "begin_fill_locked",
-                Status::Ok => "begin_fill_unlocked",
-                _ => "begin_fill_match_unavailable",
-            });
             let Some(entry) = response.matches.into_iter().find(|e| e.id == id) else {
-                crate::unlock_trace::record("begin_fill_no_matching_entry");
                 return Response::empty(if response.status == Status::Locked {
                     Status::Locked
                 } else {
@@ -386,7 +379,6 @@ pub fn handle(
                 unlock_started: false,
             });
             drop(inner);
-            crate::unlock_trace::record("begin_fill_pending_created");
             state.complete_after_unlock(vault);
             if response.status == Status::Locked {
                 focus_if_waiting(state, app);

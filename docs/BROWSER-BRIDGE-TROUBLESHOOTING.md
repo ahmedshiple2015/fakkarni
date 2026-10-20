@@ -116,8 +116,8 @@ include mouse movement, which incorrectly cancelled startup. The desktop now che
 the actual foreground owner instead and cancels if another app or browser window
 has focus. The user confirmed two consecutive cold starts in Brave, including
 first-click PIN and automatic filling, but later reported more intermittent Brave
-failures. Edge cold starts were reported working. Temporary stage tracing remains
-enabled in this debug build during acceptance. A successful build alone is not
+failures. Edge cold starts were reported working. Temporary stage tracing was
+enabled in the diagnostic builds during acceptance. A successful build alone is not
 proof that the browser uses that build: verify the installed executable in the
 normal desktop session.
 
@@ -135,8 +135,8 @@ All 30 extension tests and the synthetic rendered popup check passed. Checks cov
 the close barrier, original-document binding, early disconnect, rejected handoffs,
 repeat fills, locked/unlocked labels, no external requests and no overflow. Reload
 the unpacked extension to use the new worker; no desktop rebuild or bridge repair
-is needed. Repeated Brave acceptance is pending, followed by an Edge regression
-check. Temporary tracing will be removed after the full path is accepted.
+is needed. This change alone did not resolve every Brave attempt; the provider
+ownership update below was required before repeated Brave acceptance.
 
 Port lifetime behavior follows [Chrome's messaging documentation](https://developer.chrome.com/docs/extensions/develop/concepts/messaging#port-lifetime).
 
@@ -153,12 +153,29 @@ decryption. Previously only the key handle had an owner, leaving any key-opening
 without one. Provider setup failure stops access. This follows the documented
 [provider UI context during key opening](https://learn.microsoft.com/en-us/windows/win32/seccng/key-storage-property-identifiers).
 
-An opt-in, thread-scoped debug observer now distinguishes provider opening, key
+An opt-in, thread-scoped debug observer distinguished provider opening, key
 opening, property setup and private decryption errors using static stages and
-numeric status codes only. It restores its previous observer on return or unwind
-and does nothing in release builds. No keys, payloads or PINs enter the observer.
+numeric status codes only. It restored its previous observer on return or unwind
+and did nothing in release builds. No keys, payloads or PINs entered the observer.
 
 Nineteen targeted tests passed, including provider-level owner setup without
 opening a stored key, ephemeral software RSA interoperability, observer cleanup,
 enrollment preservation and browser cancellation. Strict Clippy and the desktop
-build passed. Repeated Brave acceptance and an Edge regression check remain pending.
+build passed. The user then confirmed five consecutive Brave cold starts with
+first-click PIN and automatic filling.
+
+## Final build and acceptance
+
+The temporary observer, stage writer and all tracing calls have been removed from
+the final desktop build. No provider policy or authentication requirement was
+relaxed during cleanup. The 71 affected Rust tests passed serially, strict Clippy
+and the desktop build passed, and the extension's 30 tests plus rendered popup
+check passed. One parallel run of the existing pipe integration test encountered
+an EOF on request 17; its isolated rerun and full serial rerun passed. Keep that
+intermittent transport test on the release-hardening follow-up list.
+
+The final build is installed. A final cold-start regression check in both browsers
+is pending; the five-attempt Brave check passed before diagnostic removal.
+Deletion of the old `target/debug/fakkarni-unlock-trace.json` artifact was rejected
+by automatic approval review with only "blocked by policy" as the reason. It
+contains static stages/status codes only and is no longer updated by the app.

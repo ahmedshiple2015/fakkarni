@@ -22,22 +22,6 @@ pub enum RestoreFailure {
     ForegroundDenied,
 }
 
-impl RestoreFailure {
-    pub fn stage(&self) -> &'static str {
-        match self {
-            Self::Stale => "pin_owner_stale",
-            Self::WindowGone => "pin_owner_window_gone",
-            Self::WindowHidden => "pin_owner_window_hidden",
-            Self::WindowMinimized => "pin_owner_window_minimized",
-            Self::RootChanged => "pin_owner_root_changed",
-            Self::ProcessChanged => "pin_owner_process_changed",
-            Self::UnsupportedProcess => "pin_owner_process_unsupported",
-            Self::ForegroundChanged => "pin_owner_other_app_foreground",
-            Self::ForegroundDenied => "pin_owner_foreground_denied",
-        }
-    }
-}
-
 #[derive(Clone, Copy)]
 enum Foreground {
     Browser,
