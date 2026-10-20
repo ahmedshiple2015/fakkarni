@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod backup;
+mod bridge_setup;
 mod browser;
 mod browser_unlock;
 mod credentials;
@@ -428,7 +429,8 @@ fn main() {
             backup::prepare_restore,
             backup::cancel_restore,
             backup::commit_restore,
-            credentials::change_master_password
+            credentials::change_master_password,
+            bridge_setup::repair_browser_bridge
         ])
         .run(tauri::generate_context!())
         .expect("Couldn't start Fakkarni");

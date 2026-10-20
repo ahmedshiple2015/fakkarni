@@ -26,6 +26,8 @@ let browserSettingsError: string | null = null;
 let pendingFill: BrowserFill | null = null;
 let pendingRead = false;
 let backupBusy = false;
+let bridgeRepairBusy = false;
+type BridgeRepairReport = { browsers: string[]; restartRequired: boolean };
 let view: "vault" | "settings" = "vault";
 type RestorePreview = { token: string; entryCount: number; fileName: string; hasExistingVault: boolean };
 type RestoreReport = { entryCount: number; recoveryPath: string | null; warnings: string[] };
@@ -185,6 +187,20 @@ function locked() {
     restore.innerHTML = `${icon("folder")}<span>Import or restore an encrypted vault</span>`;
     helper.after(restore);
     restore.addEventListener("click", restoreBackup);
+    const repair = document.createElement("button");
+    repair.type = "button";
+    repair.className = "text-button import-action";
+    repair.id = "repair-browser-bridge-locked";
+    repair.dataset.bridgeRepair = "";
+    repair.disabled = bridgeRepairBusy;
+    repair.innerHTML = `${icon("refresh")}<span>Repair browser bridge</span>`;
+    const feedback = document.createElement("p");
+    feedback.className = "hint";
+    feedback.dataset.bridgeRepairStatus = "";
+    feedback.setAttribute("role", "status");
+    feedback.setAttribute("aria-live", "polite");
+    restore.after(repair, feedback);
+    repair.addEventListener("click", () => { void repairBrowserBridge(feedback); });
   }
   if (native) {
     if (status.exists && hello.enabled && hello.available)
@@ -290,6 +306,7 @@ function vault() {
   masterPasswordSettings();
   desktopSettings();
   browserPreferences();
+  bridgeRepairSettings();
   backupPreferences();
   renderBrowserFill();
   document.querySelector("#lock")!.addEventListener("click", async () => {
@@ -364,6 +381,40 @@ function browserPreferences() {
       if (generation === epoch && section.isConnected) checkbox.disabled = false;
     }
   });
+}
+function bridgeRepairSettings() {
+  const section = document.createElement("section");
+  section.className = "desktop-settings";
+  section.setAttribute("aria-label", "Browser bridge setup");
+  section.innerHTML = `<div class="setting-row"><div class="setting-copy"><h3>Browser connection</h3><p>Repair the local connection for Brave and Edge.</p></div><button type="button" class="secondary" id="repair-browser-bridge" data-bridge-repair ${!native || bridgeRepairBusy ? "disabled" : ""}>Repair browser bridge</button></div><p class="hint" data-bridge-repair-status role="status" aria-live="polite"></p>`;
+  document.querySelector("#security-settings")!.append(section);
+  const feedback = section.querySelector<HTMLElement>("[data-bridge-repair-status]")!;
+  section.querySelector("button")!.addEventListener("click", () => { void repairBrowserBridge(feedback); });
+}
+async function repairBrowserBridge(feedback: HTMLElement) {
+  if (!native || bridgeRepairBusy) return;
+  const setBusy = (busy: boolean) => {
+    bridgeRepairBusy = busy;
+    app.querySelectorAll<HTMLButtonElement>("[data-bridge-repair]").forEach(button => {
+      button.disabled = busy;
+      button.setAttribute("aria-busy", String(busy));
+    });
+  };
+  const reportStatus = (text: string) => {
+    const target = feedback.isConnected ? feedback : app.querySelector<HTMLElement>("[data-bridge-repair-status]");
+    if (target) target.textContent = text;
+    else message(text);
+  };
+  setBusy(true);
+  feedback.textContent = "Repairing and checking the browser bridge…";
+  try {
+    const report = await invoke<BridgeRepairReport>("repair_browser_bridge");
+    reportStatus(`Bridge repaired for ${report.browsers.join(" and ")}.${report.restartRequired ? " If it still cannot connect, fully exit and reopen your browser." : ""}`);
+  } catch (error) {
+    reportStatus(`Bridge repair could not finish: ${String(error)}`);
+  } finally {
+    setBusy(false);
+  }
 }
 function backupPreferences() {
   const section = document.createElement("section");

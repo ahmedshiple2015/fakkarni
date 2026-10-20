@@ -21,6 +21,20 @@ parent chain and verify the default `REG_SZ` value in both registry views.
 
 ## Repair in the normal Windows session
 
+Open Fakkarni normally and choose **Settings → Browser connection → Repair browser
+bridge**. The same action is available on the locked screen, so repair does not
+require a vault unlock. It installs and verifies the bridge files and current-user
+registrations for Brave and Edge directly from the desktop app, without a terminal,
+administrator prompt, or access to vault contents. An existing, unchanged bridge
+executable is preserved. The app never closes your browsers automatically; fully
+exit and reopen them if they still cannot connect after repair.
+
+The desktop executable's folder must also contain `fakkarni-native-host.exe`.
+If it is missing, restore it from the application build/install before repairing.
+The button reports that failure rather than registering a missing executable.
+
+The File Explorer repair launcher remains available as a development fallback:
+
 1. Build the desktop and native-host executables if they do not exist yet.
 2. In File Explorer, double-click `scripts/repair-browser-bridge.cmd` as the normal
    Windows user. Do not use Run as administrator or an isolated development shell.
@@ -49,3 +63,19 @@ Regression checks:
 
 User acceptance remains pending until the normal desktop installation report is
 healthy and the extension works after a real Windows restart.
+
+## Settings button verification (2026-10-20)
+
+The native repair path passed seven focused checks: manifest identity, a fresh
+UUID-scoped registry branch with missing ancestors and incorrect value type,
+synthetic file/registration installation, unchanged repeated repair, missing
+sidecar/failed registration, metadata replacement failures, and an in-use bridge
+executable. No production browser registration or vault was altered by those tests.
+All 40 desktop Rust tests, strict workspace Clippy, seven form tests, the frontend
+build and synthetic UI checks passed. UI checks covered both entry points,
+duplicate clicks, failure/retry, and reporting a completed repair across locking.
+
+Manual acceptance of the Settings action is still pending: open Fakkarni normally,
+choose Repair browser bridge, confirm its success message, and check the Brave and
+Edge extensions. Repeating repair should succeed without changing vault contents
+or terminating browsers. The locked-screen action should work without a vault unlock.
