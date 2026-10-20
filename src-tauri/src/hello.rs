@@ -15,6 +15,9 @@ pub(super) struct HelloState {
 }
 
 impl HelloState {
+    pub(super) fn manager(&self) -> Manager {
+        Manager::new(self.enrollment_path.clone(), self.vault_path.clone())
+    }
     pub(super) fn credential_gate(&self) -> Arc<Mutex<()>> {
         self.gate.clone()
     }
@@ -79,10 +82,39 @@ fn unlock_verified_secret(
     epoch: u64,
     secret: fakkarni_hello_enrollment::UnlockedSecret,
 ) -> Result<(), String> {
+    unlock_verified_secret_when(vault, epoch, secret, || true)
+}
+
+pub(super) fn unlock_browser_secret(
+    vault: &Shared,
+    epoch: u64,
+    browser: &crate::browser::BrowserState,
+    request_id: &str,
+    secret: fakkarni_hello_enrollment::UnlockedSecret,
+) -> Result<(), String> {
+    unlock_verified_secret_when(vault, epoch, secret, || browser.is_waiting(request_id))
+}
+
+fn unlock_verified_secret_when(
+    vault: &Shared,
+    epoch: u64,
+    secret: fakkarni_hello_enrollment::UnlockedSecret,
+    mut still_requested: impl FnMut() -> bool,
+) -> Result<(), String> {
     run_operation(vault, epoch, |v| {
+        if !still_requested() {
+            return Err("Browser fill request expired or was cancelled.".into());
+        }
         v.unlock(&secret.password).map_err(|e| e.to_string())?;
         match v.identity() {
-            Ok(identity) if identity == secret.vault_id => Ok(()),
+            Ok(identity) if identity == secret.vault_id => {
+                if still_requested() {
+                    Ok(())
+                } else {
+                    v.lock();
+                    Err("Browser fill request expired or was cancelled.".into())
+                }
+            }
             _ => {
                 v.lock();
                 Err("Windows Hello enrollment belongs to a different vault. Use your master password.".into())
@@ -211,6 +243,22 @@ mod tests {
         state.revoke();
         assert!(unlock_verified_secret(&state, 0, secret(id)).is_err());
         assert!(!state.inner.lock().unwrap().vault.status().unlocked);
+    }
+    #[test]
+    fn cancelled_browser_request_cannot_unlock_before_or_during_key_derivation() {
+        let (_dir, state, id) = setup();
+        assert!(unlock_verified_secret_when(&state, 0, secret(id.clone()), || false).is_err());
+        assert!(!state.inner.lock().unwrap().vault.status().unlocked);
+        let mut checks = 0;
+        let result = unlock_verified_secret_when(&state, 0, secret(id.clone()), || {
+            checks += 1;
+            checks == 1
+        });
+        assert!(result.is_err());
+        assert_eq!(checks, 2);
+        assert!(!state.inner.lock().unwrap().vault.status().unlocked);
+        unlock_verified_secret_when(&state, 0, secret(id), || true).unwrap();
+        assert!(state.inner.lock().unwrap().vault.status().unlocked);
     }
 }
 

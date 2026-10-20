@@ -849,6 +849,10 @@ function editor(entry?: FullEntry) {
   dialog.querySelector<HTMLInputElement>('input[name="title"]')?.focus();
 }
 if (native) {
+  await listen("browser-vault-unlocked", () => {
+    clearSecrets();
+    void refresh();
+  });
   await listen("browser-fill-request", () => { void refreshBrowserFill(); });
   window.setInterval(() => { void refreshBrowserFill(); }, 1000);
   await listen("vault-locked", () => {

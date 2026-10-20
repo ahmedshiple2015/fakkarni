@@ -18,11 +18,16 @@ reset this setting, so enable it again after those operations.
 
 - Vault unlocked: matching accounts show **Fill**. Choosing one fills the current
   page without another desktop approval prompt.
-- Vault locked: matching accounts show **Unlock & fill**. Choosing one brings the
-  desktop app forward, then resumes filling after password or PIN unlock.
+- Vault locked with PIN enabled: matching accounts show **Unlock & fill**. Choosing
+  one opens the Windows verification prompt over the browser without bringing the
+  vault window forward. Successful verification unlocks and fills automatically.
+  Cancelling verification cancels the fill without opening the vault window.
+- Vault locked without PIN, or with unusable PIN setup: choosing **Unlock & fill**
+  brings the master-password screen forward, then fills after unlocking.
 - Desktop fully closed: the bridge reads the optional local account index without
-  opening the app. Choosing **Unlock & fill** starts Fakkarni, brings it forward,
-  and waits for the same unlock flow. Merely opening the popup does not start it.
+  opening the app. Choosing **Unlock & fill** starts Fakkarni in the background,
+  then uses the same direct PIN prompt or master-password fallback. Merely opening
+  the popup does not start it.
 - No enabled index: the extension explains the one-time setup. No passwords or
   account names are guessed or decrypted while locked.
 
@@ -46,11 +51,40 @@ User acceptance is pending:
    native host in the normal Windows session. Reload the extension in both browsers.
 2. Launch Fakkarni normally, unlock once, and enable the setting above.
 3. Lock the vault. The popup should show accounts with **Unlock & fill**.
-4. Choose an account, unlock with PIN or the master password, and check the form
-   fills automatically. The unlocked popup should show **Fill** instead.
+4. With PIN enabled, choose an account and confirm only Windows verification
+   appears over the browser. Complete it and check the form fills automatically.
+   The vault window should not be brought forward. The unlocked popup should show
+   **Fill** instead. Lock again and cancel PIN: neither filling nor the vault
+   window should appear. Try again to confirm cancellation permits a fresh request.
 5. Quit Fakkarni completely from its tray menu. Open the extension: accounts should
    still appear and the desktop app should stay closed until an account is chosen.
-6. Choose an account and confirm the app opens, requests unlock, and fills afterward.
+6. Choose an account and confirm the app starts in the background, Windows PIN
+   appears directly, and filling follows without bringing the vault forward.
 7. Restart Windows and repeat the closed-app test in Brave and Edge.
+8. With PIN disabled on a test setup, confirm the master-password screen still
+   appears and filling resumes after password unlock.
 
 Do not share any actual passwords while reporting test results.
+
+## Native prompt ownership
+
+The desktop captures the foreground root-owner window and process identifier on
+the selected account request, verifies that it belongs to a supported browser
+process, and checks it again before prompting. This avoids
+using the transient extension popup as an owner. Windows creates the verification
+UI; Fakkarni never renders or receives the Windows PIN. Successful verification is
+bound to the current vault, session epoch and still-pending browser request.
+No foreground permission is granted to arbitrary processes.
+
+The generic CNG property supports a parent HWND for provider UI; cross-process
+window ownership is supported by Windows. The specific provider's focus behavior
+still needs the manual browser test above.
+[CNG key properties](https://github.com/MicrosoftDocs/win32/blob/docs/desktop-src/SecCNG/key-storage-property-identifiers.md),
+[Windows cross-process ownership](https://devblogs.microsoft.com/oldnewthing/20110331-00/?p=11083).
+
+Direct-PIN verification record (2026-10-20): 88 Rust tests passed across the
+workspace and final desktop rerun; one fixture generator remains intentionally
+ignored. Strict workspace Clippy, seven desktop form tests, 23 extension tests,
+the frontend and desktop builds, and the synthetic native-event UI check passed.
+Tests never opened a real vault or PIN prompt. Actual Windows prompt placement,
+cold-start behavior, cancellation, and fallback remain awaiting user acceptance.

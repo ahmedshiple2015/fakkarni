@@ -2,6 +2,7 @@
 
 mod backup;
 mod browser;
+mod browser_unlock;
 mod credentials;
 mod hello;
 mod lifecycle;

@@ -12,7 +12,7 @@ use std::{
     sync::{atomic::Ordering, Arc, Mutex},
     time::{Duration, Instant},
 };
-use tauri::{Emitter, State};
+use tauri::State;
 
 const LIFETIME: Duration = Duration::from_secs(120);
 #[derive(Clone, Serialize)]
@@ -28,6 +28,7 @@ struct Pending {
     entry_id: String,
     started: Instant,
     ready: Option<(Credential, u64)>,
+    unlock_started: bool,
 }
 struct Inner {
     index: Index,
@@ -39,6 +40,45 @@ pub struct BrowserState {
     path: PathBuf,
 }
 impl BrowserState {
+    pub(super) fn claim_unlock(&self, request_id: &str) -> bool {
+        let Ok(mut inner) = self.inner.lock() else {
+            return false;
+        };
+        Self::expire(&mut inner);
+        let Some(pending) = inner
+            .pending
+            .as_mut()
+            .filter(|p| p.info.request_id == request_id && p.ready.is_none() && !p.unlock_started)
+        else {
+            return false;
+        };
+        pending.unlock_started = true;
+        true
+    }
+    pub(super) fn is_waiting(&self, request_id: &str) -> bool {
+        // Polling holds this briefly and only ever try-locks the vault. Waiting
+        // here avoids rejecting valid PIN results on harmless polling contention.
+        let Ok(mut inner) = self.inner.lock() else {
+            return false;
+        };
+        Self::expire(&mut inner);
+        inner
+            .pending
+            .as_ref()
+            .is_some_and(|p| p.info.request_id == request_id && p.ready.is_none())
+    }
+    pub(super) fn cancel_waiting(&self, request_id: &str) {
+        if let Ok(mut inner) = self.inner.lock() {
+            Self::expire(&mut inner);
+            if inner
+                .pending
+                .as_ref()
+                .is_some_and(|p| p.info.request_id == request_id && p.ready.is_none())
+            {
+                inner.pending = None;
+            }
+        }
+    }
     pub fn new(path: PathBuf) -> Self {
         let index = read_index(&path).unwrap_or_default();
         Self {
@@ -255,16 +295,15 @@ fn matches(vault: &SharedState, state: &BrowserState, origin: &str) -> Response 
     }
 }
 fn focus_if_waiting(state: &BrowserState, app: Option<&tauri::AppHandle>) {
-    let waiting = state
-        .inner
-        .try_lock()
-        .ok()
-        .is_some_and(|inner| inner.pending.as_ref().is_some_and(|p| p.ready.is_none()));
-    if waiting {
-        if let Some(app) = app {
-            crate::lifecycle::show_main(app);
-            let _ = app.emit("browser-fill-request", ());
-        }
+    let request_id = state.inner.try_lock().ok().and_then(|inner| {
+        inner
+            .pending
+            .as_ref()
+            .filter(|p| p.ready.is_none())
+            .map(|p| p.info.request_id.clone())
+    });
+    if let (Some(request_id), Some(app)) = (request_id, app) {
+        crate::browser_unlock::begin(app, request_id);
     }
 }
 
@@ -304,7 +343,9 @@ pub fn handle(
                 drop(inner);
                 if same && waiting {
                     state.complete_after_unlock(vault);
-                    focus_if_waiting(state, app);
+                    if response.status == Status::Locked {
+                        focus_if_waiting(state, app);
+                    }
                 }
                 return Response::empty(if same {
                     Status::Pending
@@ -335,10 +376,13 @@ pub fn handle(
                 entry_id: id,
                 started: Instant::now(),
                 ready: None,
+                unlock_started: false,
             });
             drop(inner);
             state.complete_after_unlock(vault);
-            focus_if_waiting(state, app);
+            if response.status == Status::Locked {
+                focus_if_waiting(state, app);
+            }
             Response::empty(Status::Pending)
         }
         Request::CancelFill {
@@ -582,6 +626,43 @@ mod tests {
                 request_id: token.into(),
             },
         )
+    }
+    #[test]
+    fn pin_prompt_claim_is_single_use_and_cancel_or_expiry_revokes_it() {
+        let (_dir, vault, state, id) = fixture();
+        state
+            .inner
+            .lock()
+            .unwrap()
+            .index
+            .settings
+            .show_accounts_when_locked = true;
+        state.refresh(&mut vault.inner.lock().unwrap().vault);
+        vault.inner.lock().unwrap().vault.lock();
+        let first = "a".repeat(32);
+        assert_eq!(begin(&vault, &state, &id, &first).status, Status::Pending);
+        assert!(!state.claim_unlock("wrong-request"));
+        assert!(state.claim_unlock(&first));
+        assert!(!state.claim_unlock(&first));
+        assert!(state.is_waiting(&first));
+        state.cancel_waiting(&first);
+        assert!(!state.is_waiting(&first));
+        assert!(!state.claim_unlock(&first));
+        assert_eq!(begin(&vault, &state, &id, &first).status, Status::Cancelled);
+        let second = "b".repeat(32);
+        assert_eq!(begin(&vault, &state, &id, &second).status, Status::Pending);
+        state.cancel_waiting(&first);
+        assert!(state.is_waiting(&second));
+        state
+            .inner
+            .lock()
+            .unwrap()
+            .pending
+            .as_mut()
+            .unwrap()
+            .started = Instant::now() - LIFETIME;
+        assert!(!state.claim_unlock(&second));
+        assert!(!state.is_waiting(&second));
     }
     #[test]
     fn repeated_wire_fills_and_credential_drops_do_not_modify_stored_password() {
