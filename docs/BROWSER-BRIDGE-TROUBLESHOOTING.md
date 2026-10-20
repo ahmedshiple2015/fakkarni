@@ -79,3 +79,29 @@ Manual acceptance of the Settings action is still pending: open Fakkarni normall
 choose Repair browser bridge, confirm its success message, and check the Brave and
 Edge extensions. Repeating repair should succeed without changing vault contents
 or terminating browsers. The locked-screen action should work without a vault unlock.
+
+## First cold-start click opens the app but never asks for PIN (2026-10-20)
+
+A temporary stage-only trace captured the first request arriving and creating its
+pending fill, followed by `pin_owner_invalid`. The request was cancelled before
+calling the PIN provider: capturing the foreground browser after desktop startup
+lost the original window. Increasing the startup wait did not address this case.
+
+The native host now captures the foreground browser before launching the desktop
+and passes a one-use startup hint bound to that exact fill nonce. The hint contains
+only HWND, process ID, Windows ticks and the request nonce; no account, URL or secret.
+It cannot initiate an unlock by itself. The desktop checks the pending request,
+window/process identity and age again. Restoring foreground is allowed only when
+no new user input occurred; Windows retains final control over foreground access.
+Warm requests continue using their current foreground browser. The extension wire
+format remains strict and does not accept a supplied window-owner field.
+
+Tests cover hint parsing, exact-request binding, expiry and tick wrapping, changed
+input, supported process names, forwarding the original selection after launch,
+and cancellation/stale-result handling. Real PIN acceptance remains pending: quit
+the app, click Unlock & fill once, verify the native prompt and automatic fill,
+then repeat from fully closed state separately in Brave and Edge. Also cancel the
+prompt and verify that no password is filled and no vault window appears.
+
+References: [Windows foreground permission](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-allowsetforegroundwindow)
+and [Edge native messaging](https://learn.microsoft.com/en-us/microsoft-edge/extensions/developer-guide/native-messaging).

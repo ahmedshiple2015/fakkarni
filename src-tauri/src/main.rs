@@ -7,6 +7,7 @@ mod browser_unlock;
 mod credentials;
 mod hello;
 mod lifecycle;
+mod unlock_trace;
 
 use fakkarni_vault::{EntryInput, EntrySummary, Status, Vault};
 use std::sync::{
@@ -327,6 +328,7 @@ fn main() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
+            unlock_trace::record("setup_started");
             let data_dir = app.path().app_local_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
             let backup_state = Arc::new(backup::BackupState::new(data_dir.clone()));
@@ -401,6 +403,7 @@ fn main() {
                     backup_state.expire();
                 }
             });
+            unlock_trace::record("setup_finished");
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

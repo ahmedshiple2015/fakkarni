@@ -33,7 +33,7 @@ fn handle_with(
     input: &mut impl io::Read,
     mut desktop: impl FnMut(&Request) -> io::Result<Response>,
     mut cache: impl FnMut() -> Option<Index>,
-    mut launch: impl FnMut() -> io::Result<()>,
+    mut launch: impl FnMut(&Request) -> io::Result<()>,
 ) -> Response {
     if caller != Some(EXTENSION_ORIGIN) {
         return error_response();
@@ -55,7 +55,7 @@ fn handle_with(
         // opt-in account metadata is available here, never encrypted-vault data.
         return cached_matches(origin, cache());
     }
-    if !matches!(request, Request::BeginFill { .. }) || launch().is_err() {
+    if !matches!(request, Request::BeginFill { .. }) || launch(&request).is_err() {
         return Response::empty(Status::Unavailable);
     }
     // Cold Tauri/WebView startup can exceed three seconds on an ordinary PC.
@@ -100,7 +100,16 @@ fn cached_matches(origin: &str, index: Option<Index>) -> Response {
     response
 }
 
-fn launch_desktop() -> io::Result<()> {
+fn launch_desktop(request: &Request) -> io::Result<()> {
+    let Request::BeginFill { request_id, .. } = request else {
+        return Err(io::Error::other(
+            "Only an account selection can launch the desktop",
+        ));
+    };
+    #[cfg(windows)]
+    let owner = fakkarni_browser_bridge::prompt_owner::StartupOwner::capture(request_id);
+    #[cfg(not(windows))]
+    let _ = request_id;
     #[derive(serde::Deserialize)]
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
     struct Config {
@@ -143,7 +152,21 @@ fn launch_desktop() -> io::Result<()> {
         prevent_protocol_handle_inheritance()?;
         command.creation_flags(0x08000000);
     }
-    command.spawn()?;
+    #[cfg(windows)]
+    if let Some(owner) = owner {
+        command.arg(owner.argument());
+    }
+    let child = command.spawn()?;
+    #[cfg(windows)]
+    {
+        // Grant only this child our foreground permission, if Windows allows it.
+        // The desktop still validates the browser owner and unchanged user input.
+        unsafe {
+            windows_sys::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow(child.id());
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = child;
     Ok(())
 }
 
@@ -225,7 +248,7 @@ mod tests {
             &mut bytes.as_slice(),
             unreachable,
             || Some(synthetic_cache()),
-            || panic!("A match request launched the desktop"),
+            |_| panic!("A match request launched the desktop"),
         );
         assert_eq!(response.status, Status::Locked);
         assert_eq!(response.matches.len(), 50);
@@ -248,7 +271,7 @@ mod tests {
                 &mut bytes.as_slice(),
                 unreachable,
                 || Some(synthetic_cache()),
-                || panic!("Match launched desktop"),
+                |_| panic!("Match launched desktop"),
             );
             assert!(response.matches.is_empty());
         }
@@ -270,7 +293,7 @@ mod tests {
                         entries: index.entries.clone(),
                     })
                 },
-                || panic!("Match launched desktop"),
+                |_| panic!("Match launched desktop"),
             );
             assert_eq!(response.status, Status::Locked);
             assert!(response.matches.is_empty());
@@ -302,7 +325,8 @@ mod tests {
                 }
             },
             || panic!("Begin fill read account cache"),
-            || {
+            |launched| {
+                assert_eq!(launched, &request);
                 launches += 1;
                 Ok(())
             },
@@ -336,7 +360,8 @@ mod tests {
                 }
             },
             || panic!("Begin fill read account cache"),
-            || {
+            |launched| {
+                assert_eq!(launched, &request);
                 launches += 1;
                 Ok(())
             },
@@ -377,7 +402,7 @@ mod tests {
                 &mut bytes.as_slice(),
                 |_| panic!("Invalid caller reached desktop"),
                 || panic!("Invalid caller read cache"),
-                || panic!("Invalid caller launched desktop"),
+                |_| panic!("Invalid caller launched desktop"),
             );
             assert_eq!(response.status, Status::Error);
         }
@@ -394,7 +419,7 @@ mod tests {
             &mut bytes.as_slice(),
             |_| Ok(Response::empty(Status::Ok)),
             || panic!("Live desktop fell back to cache"),
-            || panic!("Live desktop was launched again"),
+            |_| panic!("Live desktop was launched again"),
         );
         assert_eq!(response.status, Status::Ok);
         let bytes = framed(&Request::PollFill {
@@ -407,7 +432,7 @@ mod tests {
             &mut bytes.as_slice(),
             unreachable,
             || panic!("Poll read cache"),
-            || panic!("Poll launched desktop"),
+            |_| panic!("Poll launched desktop"),
         );
         assert_eq!(response.status, Status::Unavailable);
     }
@@ -475,6 +500,7 @@ mod tests {
             r#"{"version":1,"action":"match","origin":"http://example.com"}"#,
             r#"{"version":1,"action":"match","origin":"https://example.com/login"}"#,
             r#"{"version":1,"action":"reveal","id":"anything"}"#,
+            r#"{"version":1,"action":"begin_fill","origin":"https://example.test","id":"synthetic","request_id":"0123456789abcdef0123456789abcdef","owner_hwnd":1234}"#,
         ] {
             let mut bytes = Vec::new();
             write_frame(&mut bytes, body.as_bytes()).unwrap();

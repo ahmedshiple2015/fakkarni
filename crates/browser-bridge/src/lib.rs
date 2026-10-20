@@ -6,6 +6,10 @@
 use serde::{Deserialize, Serialize};
 use std::io::{self, Read, Write};
 
+/// Native-only foreground handoff for a desktop launched by an account click.
+#[cfg(any(windows, test))]
+pub mod prompt_owner;
+
 pub const PROTOCOL_VERSION: u32 = 1;
 pub const MAX_NATIVE_REQUEST_BYTES: usize = 8 * 1024;
 pub const MAX_FRAME_BYTES: usize = 32 * 1024;

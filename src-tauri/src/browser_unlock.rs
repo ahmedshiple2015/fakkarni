@@ -5,35 +5,25 @@ use tauri::{Emitter, Manager};
 
 const HELLO_CANCELLED: &str = "Windows Hello was cancelled.";
 
-#[cfg(any(windows, test))]
-fn browser_executable(path: &str) -> bool {
-    path.rsplit(['\\', '/']).next().is_some_and(|name| {
-        ["brave.exe", "msedge.exe", "chrome.exe"]
-            .iter()
-            .any(|browser| name.eq_ignore_ascii_case(browser))
-    })
-}
+#[cfg(windows)]
+use fakkarni_browser_bridge::prompt_owner::{PromptOwner, StartupOwner};
 
 #[cfg(windows)]
-fn browser_process(process_id: u32) -> bool {
-    use windows_sys::Win32::{
-        Foundation::CloseHandle,
-        System::Threading::{
-            OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
-        },
-    };
-    // SAFETY: the process handle is query-only, used synchronously, and always
-    // closed. This is a foreground UX check, not authorization for a vault entry.
-    unsafe {
-        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, process_id);
-        if process.is_null() {
-            return false;
-        }
-        let mut path = vec![0u16; 32768];
-        let mut length = path.len() as u32;
-        let valid = QueryFullProcessImageNameW(process, 0, path.as_mut_ptr(), &mut length) != 0;
-        CloseHandle(process);
-        valid && browser_executable(&String::from_utf16_lossy(&path[..length as usize]))
+fn capture_owner(request_id: &str) -> Option<PromptOwner> {
+    use std::sync::{Mutex, OnceLock};
+    // Read once and consume once. CLI context alone never starts a prompt: the
+    // validated, exact pending account request must reach begin_ready first.
+    static STARTUP: OnceLock<Mutex<Option<StartupOwner>>> = OnceLock::new();
+    let hint = STARTUP
+        .get_or_init(|| Mutex::new(std::env::args().find_map(|arg| StartupOwner::parse(&arg))))
+        .lock()
+        .ok()?
+        .take();
+    if let Some(hint) = hint {
+        crate::unlock_trace::record("pin_startup_owner_received");
+        hint.restore(request_id)
+    } else {
+        PromptOwner::capture()
     }
 }
 
@@ -83,57 +73,11 @@ fn attempt<T>(
     }
 }
 
-#[cfg(windows)]
-#[derive(Clone, Copy)]
-struct PromptOwner {
-    hwnd: isize,
-    process_id: u32,
-}
-
-#[cfg(windows)]
-impl PromptOwner {
-    fn capture() -> Option<Self> {
-        use windows_sys::Win32::UI::WindowsAndMessaging::{
-            GetAncestor, GetForegroundWindow, GetWindowThreadProcessId, IsIconic, IsWindow,
-            IsWindowVisible, GA_ROOTOWNER,
-        };
-        // SAFETY: these queries do not take ownership of the returned HWND.
-        unsafe {
-            let foreground = GetForegroundWindow();
-            if foreground.is_null() {
-                return None;
-            }
-            let root = GetAncestor(foreground, GA_ROOTOWNER);
-            if root.is_null()
-                || IsWindow(root) == 0
-                || IsWindowVisible(root) == 0
-                || IsIconic(root) != 0
-            {
-                return None;
-            }
-            let mut process_id = 0;
-            if GetWindowThreadProcessId(root, &mut process_id) == 0
-                || process_id == 0
-                || !browser_process(process_id)
-            {
-                return None;
-            }
-            Some(Self {
-                hwnd: root as isize,
-                process_id,
-            })
-        }
-    }
-    fn still_foreground(self) -> bool {
-        Self::capture()
-            .is_some_and(|now| now.hwnd == self.hwnd && now.process_id == self.process_id)
-    }
-}
-
 /// Claim exactly one prompt for the selected pending account, while the browser
 /// still owns the foreground. Neither acquiring its HWND nor successful Hello
 /// authentication calls show_main.
 pub(super) fn begin(app: &tauri::AppHandle, request_id: String) {
+    crate::unlock_trace::record("pin_dispatch_queued");
     let vault = app.state::<Shared>().inner().clone();
     let epoch = vault.epoch.load(Ordering::SeqCst);
     let browser = app.state::<Arc<BrowserState>>().inner().clone();
@@ -143,9 +87,11 @@ pub(super) fn begin(app: &tauri::AppHandle, request_id: String) {
     // and capture the prompt owner only once that loop can dispatch UI work.
     if app
         .run_on_main_thread(move || {
+            crate::unlock_trace::record("pin_dispatch_running");
             if !vault.blocked() && vault.epoch.load(Ordering::SeqCst) == epoch {
                 begin_ready(&queued_app, queued_request, epoch);
             } else {
+                crate::unlock_trace::record("pin_dispatch_revoked");
                 queued_app
                     .state::<Arc<BrowserState>>()
                     .cancel_waiting(&queued_request);
@@ -153,6 +99,7 @@ pub(super) fn begin(app: &tauri::AppHandle, request_id: String) {
         })
         .is_err()
     {
+        crate::unlock_trace::record("pin_dispatch_failed");
         browser.cancel_waiting(&request_id);
     }
 }
@@ -161,36 +108,65 @@ fn begin_ready(app: &tauri::AppHandle, request_id: String, epoch: u64) {
     let vault = app.state::<Shared>().inner().clone();
     let browser = app.state::<Arc<BrowserState>>().inner().clone();
     if !browser.claim_unlock(&request_id) {
+        crate::unlock_trace::record("pin_claim_rejected");
         return;
     }
+    crate::unlock_trace::record("pin_claimed");
     #[cfg(windows)]
-    let Some(owner) = PromptOwner::capture() else {
+    let Some(owner) = capture_owner(&request_id) else {
+        crate::unlock_trace::record("pin_owner_invalid");
         browser.cancel_waiting(&request_id);
         return;
     };
+    crate::unlock_trace::record("pin_owner_captured");
     let hello = app.state::<HelloState>();
     let manager = hello.manager();
     let gate = hello.credential_gate();
     let app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
+        crate::unlock_trace::record("pin_worker_started");
         let Ok(_guard) = gate.try_lock() else {
+            crate::unlock_trace::record("pin_gate_busy");
             // An existing Hello operation owns the verification UI. Do not open
             // a second prompt or surface the vault as an accidental fallback.
             browser.cancel_waiting(&request_id);
             return;
         };
         let current = || {
-            !vault.blocked()
-                && vault.epoch.load(Ordering::SeqCst) == epoch
-                && browser.is_waiting(&request_id)
+            if vault.blocked() {
+                crate::unlock_trace::record("pin_request_os_blocked");
+                return false;
+            }
+            if vault.epoch.load(Ordering::SeqCst) != epoch {
+                crate::unlock_trace::record("pin_request_epoch_changed");
+                return false;
+            }
+            if !browser.is_waiting(&request_id) {
+                crate::unlock_trace::record("pin_request_not_waiting");
+                return false;
+            }
+            true
         };
         let outcome = attempt(
             current,
             || {
-                if !manager.enabled()? {
+                crate::unlock_trace::record("pin_enrollment_check");
+                if !manager.enabled().inspect_err(|error| {
+                    crate::unlock_trace::failure("pin_enrollment_error", error)
+                })? {
+                    crate::unlock_trace::record("pin_not_enrolled");
                     return Ok(false);
                 }
+                crate::unlock_trace::record("pin_enrolled");
                 fakkarni_windows_hello::availability()
+                    .inspect(|available| {
+                        crate::unlock_trace::record(if *available {
+                            "pin_provider_available"
+                        } else {
+                            "pin_provider_unavailable"
+                        })
+                    })
+                    .inspect_err(|error| crate::unlock_trace::failure("pin_provider_error", error))
             },
             || {
                 #[cfg(windows)]
@@ -199,9 +175,16 @@ fn begin_ready(app: &tauri::AppHandle, request_id: String, epoch: u64) {
                     // was checked. Treat a stale owner as cancellation, rather
                     // than showing a prompt attached to an unrelated window.
                     if !owner.still_foreground() {
+                        crate::unlock_trace::record("pin_owner_changed_before_prompt");
                         return Err(HELLO_CANCELLED.into());
                     }
-                    manager.unlock(owner.hwnd)
+                    crate::unlock_trace::record("pin_prompt_started");
+                    manager
+                        .unlock(owner.hwnd)
+                        .inspect(|_| crate::unlock_trace::record("pin_prompt_verified"))
+                        .inspect_err(|error| {
+                            crate::unlock_trace::failure("pin_prompt_error", error)
+                        })
                 }
                 #[cfg(not(windows))]
                 {
@@ -209,9 +192,19 @@ fn begin_ready(app: &tauri::AppHandle, request_id: String, epoch: u64) {
                 }
             },
             |secret| {
+                crate::unlock_trace::record("pin_vault_unlock_started");
                 crate::hello::unlock_browser_secret(&vault, epoch, &browser, &request_id, secret)
+                    .inspect_err(|error| {
+                        crate::unlock_trace::failure("pin_vault_unlock_error", error)
+                    })
             },
         );
+        crate::unlock_trace::record(match outcome {
+            Outcome::Completed => "pin_completed",
+            Outcome::Fallback => "pin_fallback",
+            Outcome::Cancelled => "pin_cancelled",
+            Outcome::Stale => "pin_stale",
+        });
         match outcome {
             Outcome::Completed => {
                 if vault.blocked() || vault.epoch.load(Ordering::SeqCst) != epoch {
@@ -241,25 +234,6 @@ fn begin_ready(app: &tauri::AppHandle, request_id: String, epoch: u64) {
 mod tests {
     use super::*;
     use std::cell::{Cell, RefCell};
-
-    #[test]
-    fn prompt_owner_must_be_a_supported_browser_process() {
-        for path in [
-            r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe",
-            r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-            r"C:\Browser\CHROME.EXE",
-        ] {
-            assert!(browser_executable(path));
-        }
-        for path in [
-            r"C:\App\fakkarni.exe",
-            r"C:\App\brave.exe.old",
-            r"C:\brave.exe\other.exe",
-            "",
-        ] {
-            assert!(!browser_executable(path));
-        }
-    }
 
     #[test]
     fn enabled_hello_commits_without_desktop_fallback() {
