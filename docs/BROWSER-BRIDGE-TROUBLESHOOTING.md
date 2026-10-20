@@ -91,13 +91,14 @@ The native host now captures the foreground browser before launching the desktop
 and passes a one-use startup hint bound to that exact fill nonce. The hint contains
 only HWND, process ID, Windows ticks and the request nonce; no account, URL or secret.
 It cannot initiate an unlock by itself. The desktop checks the pending request,
-window/process identity and age again. Restoring foreground is allowed only when
-no new user input occurred; Windows retains final control over foreground access.
+window/process identity and age again. Restoring foreground is limited to the
+original browser, this desktop's startup window, or a transition with no foreground
+window; Windows retains final control over foreground access.
 Warm requests continue using their current foreground browser. The extension wire
 format remains strict and does not accept a supplied window-owner field.
 
-Tests cover hint parsing, exact-request binding, expiry and tick wrapping, changed
-input, supported process names, forwarding the original selection after launch,
+Tests cover hint parsing, exact-request binding, expiry and tick wrapping, mouse
+movement versus another foreground app, supported process names, forwarding the original selection after launch,
 and cancellation/stale-result handling. Real PIN acceptance remains pending: quit
 the app, click Unlock & fill once, verify the native prompt and automatic fill,
 then repeat from fully closed state separately in Brave and Edge. Also cancel the
@@ -105,3 +106,15 @@ prompt and verify that no password is filled and no vault window appears.
 
 References: [Windows foreground permission](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-allowsetforegroundwindow)
 and [Edge native messaging](https://learn.microsoft.com/en-us/microsoft-edge/extensions/developer-guide/native-messaging).
+
+The normal-desktop report initially showed `hostMatchesBuild: false`, explaining
+why the first retest still had no startup hint. Running the repair launcher from
+File Explorer changed this to `true`; the next trace contained the native handoff.
+A first successful PIN test was followed by intermittent failures in both browsers.
+The more precise trace identified `pin_owner_input_changed`: global input ticks
+include mouse movement, which incorrectly cancelled startup. The desktop now checks
+the actual foreground owner instead and cancels if another app or browser window
+has focus. Temporary stage tracing remains enabled in this debug build while
+repeated cold-start autofill acceptance is pending. A successful build alone is not
+proof that the browser uses that build: verify the installed executable in the
+normal desktop session.

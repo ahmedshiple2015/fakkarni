@@ -9,11 +9,50 @@ pub struct PromptOwner {
     process_id: u32,
 }
 
+#[derive(Debug)]
+pub enum RestoreFailure {
+    Stale,
+    WindowGone,
+    WindowHidden,
+    WindowMinimized,
+    RootChanged,
+    ProcessChanged,
+    UnsupportedProcess,
+    ForegroundChanged,
+    ForegroundDenied,
+}
+
+impl RestoreFailure {
+    pub fn stage(&self) -> &'static str {
+        match self {
+            Self::Stale => "pin_owner_stale",
+            Self::WindowGone => "pin_owner_window_gone",
+            Self::WindowHidden => "pin_owner_window_hidden",
+            Self::WindowMinimized => "pin_owner_window_minimized",
+            Self::RootChanged => "pin_owner_root_changed",
+            Self::ProcessChanged => "pin_owner_process_changed",
+            Self::UnsupportedProcess => "pin_owner_process_unsupported",
+            Self::ForegroundChanged => "pin_owner_other_app_foreground",
+            Self::ForegroundDenied => "pin_owner_foreground_denied",
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Foreground {
+    Browser,
+    Startup,
+    None,
+    Other,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct StartupOwner {
     request_id: String,
     owner: PromptOwner,
     captured_at: u32,
+    // Retained for compatibility with the already-installed native host. Mouse
+    // movement updates this global tick, so it cannot establish a focus change.
     input_at: u32,
 }
 
@@ -62,8 +101,12 @@ impl StartupOwner {
         })
     }
 
-    fn permits_restore(&self, request_id: &str, now: u32, input_at: u32) -> bool {
-        self.matches_selection(request_id, now) && self.input_at == input_at
+    fn permits_restore(&self, request_id: &str, now: u32, foreground: Foreground) -> bool {
+        self.matches_selection(request_id, now)
+            && matches!(
+                foreground,
+                Foreground::Browser | Foreground::Startup | Foreground::None
+            )
     }
 
     fn matches_selection(&self, request_id: &str, now: u32) -> bool {
@@ -79,7 +122,8 @@ mod platform {
         System::{
             SystemInformation::GetTickCount,
             Threading::{
-                OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
+                GetCurrentProcessId, OpenProcess, QueryFullProcessImageNameW,
+                PROCESS_QUERY_LIMITED_INFORMATION,
             },
         },
         UI::{
@@ -116,18 +160,58 @@ mod platform {
     }
 
     impl PromptOwner {
-        fn valid(self) -> bool {
+        fn foreground(self) -> Foreground {
+            // SAFETY: query only. A newly-created Tauri/WebView window can own
+            // foreground during startup even though the vault stays hidden.
+            unsafe {
+                let window = GetForegroundWindow();
+                if window.is_null() {
+                    return Foreground::None;
+                }
+                let root = GetAncestor(window, GA_ROOTOWNER);
+                if root.is_null() {
+                    return Foreground::Other;
+                }
+                let mut process_id = 0;
+                if GetWindowThreadProcessId(root, &mut process_id) == 0 {
+                    return Foreground::Other;
+                }
+                if root as isize == self.hwnd && process_id == self.process_id {
+                    Foreground::Browser
+                } else if process_id == GetCurrentProcessId() {
+                    Foreground::Startup
+                } else {
+                    Foreground::Other
+                }
+            }
+        }
+
+        fn validate(self) -> Result<(), RestoreFailure> {
             let hwnd = self.hwnd as *mut std::ffi::c_void;
             let mut process_id = 0;
             // SAFETY: HWND queries only; handles may disappear, so validate each time.
             unsafe {
-                IsWindow(hwnd) != 0
-                    && IsWindowVisible(hwnd) != 0
-                    && IsIconic(hwnd) == 0
-                    && GetAncestor(hwnd, GA_ROOTOWNER) == hwnd
-                    && GetWindowThreadProcessId(hwnd, &mut process_id) != 0
-                    && process_id == self.process_id
-                    && browser_process(process_id)
+                if IsWindow(hwnd) == 0 {
+                    return Err(RestoreFailure::WindowGone);
+                }
+                if IsWindowVisible(hwnd) == 0 {
+                    return Err(RestoreFailure::WindowHidden);
+                }
+                if IsIconic(hwnd) != 0 {
+                    return Err(RestoreFailure::WindowMinimized);
+                }
+                if GetAncestor(hwnd, GA_ROOTOWNER) != hwnd {
+                    return Err(RestoreFailure::RootChanged);
+                }
+                if GetWindowThreadProcessId(hwnd, &mut process_id) == 0
+                    || process_id != self.process_id
+                {
+                    return Err(RestoreFailure::ProcessChanged);
+                }
+                if !browser_process(process_id) {
+                    return Err(RestoreFailure::UnsupportedProcess);
+                }
+                Ok(())
             }
         }
 
@@ -144,7 +228,7 @@ mod platform {
                     hwnd: root as isize,
                     process_id,
                 };
-                owner.valid().then_some(owner)
+                owner.validate().is_ok().then_some(owner)
             }
         }
 
@@ -167,20 +251,20 @@ mod platform {
             })
         }
 
-        pub fn restore(self, request_id: &str) -> Option<PromptOwner> {
-            // Mouse movement inside the original foreground browser does not
-            // revoke the click; unchanged input is needed only to restore focus.
+        pub fn restore(self, request_id: &str) -> Result<PromptOwner, RestoreFailure> {
             let now = unsafe { GetTickCount() };
-            if !self.matches_selection(request_id, now) || !self.owner.valid() {
-                return None;
+            if !self.matches_selection(request_id, now) {
+                return Err(RestoreFailure::Stale);
             }
-            if self.owner.still_foreground() {
-                return Some(self.owner);
+            self.owner.validate()?;
+            let foreground = self.owner.foreground();
+            if matches!(foreground, Foreground::Browser) {
+                return Ok(self.owner);
             }
-            // A later click or keypress means the user moved on. Never restore
-            // focus on that basis, nor trust an expired/recycled/non-browser HWND.
-            if !self.permits_restore(request_id, now, last_input()?) {
-                return None;
+            // Check where focus actually went, not whether the mouse moved.
+            // Another application (or another browser window) always cancels.
+            if !self.permits_restore(request_id, now, foreground) {
+                return Err(RestoreFailure::ForegroundChanged);
             }
             if !self.owner.still_foreground() {
                 // SAFETY: still-live browser HWND validated above. Windows retains
@@ -189,7 +273,11 @@ mod platform {
                     SetForegroundWindow(self.owner.hwnd as *mut std::ffi::c_void);
                 }
             }
-            self.owner.still_foreground().then_some(self.owner)
+            if self.owner.still_foreground() {
+                Ok(self.owner)
+            } else {
+                Err(RestoreFailure::ForegroundDenied)
+            }
         }
     }
 }
@@ -224,15 +312,24 @@ mod tests {
         }
     }
     #[test]
-    fn restore_requires_exact_selection_no_new_input_and_fresh_startup() {
-        assert!(hint().permits_restore(NONCE, 5000, 90));
-        assert!(!hint().permits_restore("ffffffffffffffffffffffffffffffff", 5000, 90));
-        assert!(!hint().permits_restore(NONCE, 5000, 91));
-        assert!(!hint().permits_restore(NONCE, 15101, 90));
+    fn restore_requires_exact_selection_fresh_startup_and_safe_foreground() {
+        for foreground in [Foreground::Browser, Foreground::Startup, Foreground::None] {
+            assert!(hint().permits_restore(NONCE, 5000, foreground));
+            assert!(!hint().permits_restore("ffffffffffffffffffffffffffffffff", 5000, foreground));
+            assert!(!hint().permits_restore(NONCE, 15101, foreground));
+        }
+        assert!(!hint().permits_restore(NONCE, 5000, Foreground::Other));
         let mut wrap = hint();
         wrap.captured_at = u32::MAX - 100;
-        assert!(wrap.permits_restore(NONCE, 100, 90));
-        assert!(!wrap.permits_restore(NONCE, 20000, 90));
+        assert!(wrap.permits_restore(NONCE, 100, Foreground::Startup));
+        assert!(!wrap.permits_restore(NONCE, 20000, Foreground::Startup));
+    }
+    #[test]
+    fn mouse_activity_does_not_cancel_our_startup_window_but_other_apps_do() {
+        let mut changed_input = hint();
+        changed_input.input_at = 123456;
+        assert!(changed_input.permits_restore(NONCE, 5000, Foreground::Startup));
+        assert!(!changed_input.permits_restore(NONCE, 5000, Foreground::Other));
     }
     #[test]
     fn owner_process_must_be_supported_browser() {

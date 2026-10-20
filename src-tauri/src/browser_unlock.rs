@@ -22,6 +22,8 @@ fn capture_owner(request_id: &str) -> Option<PromptOwner> {
     if let Some(hint) = hint {
         crate::unlock_trace::record("pin_startup_owner_received");
         hint.restore(request_id)
+            .inspect_err(|error| crate::unlock_trace::record(error.stage()))
+            .ok()
     } else {
         PromptOwner::capture()
     }
