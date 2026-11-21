@@ -5,6 +5,7 @@ mod backup;
 mod credentials;
 mod matching;
 mod preflight;
+pub mod recovery;
 pub use backup::{PreparedRestore, RestoreReport};
 use keepass::{
     config::{CompressionConfig, DatabaseConfig, DatabaseVersion, KdfConfig},
@@ -307,6 +308,15 @@ impl Vault {
         input: &EntryInput,
         replace_password: bool,
     ) -> Result<String> {
+        self.save_entry_when(input, replace_password, || true)
+    }
+
+    pub fn save_entry_when(
+        &mut self,
+        input: &EntryInput,
+        replace_password: bool,
+        allowed: impl Fn() -> bool,
+    ) -> Result<String> {
         validate(input)?;
         let update_password = input.id.is_none() || replace_password;
         if update_password && input.password.is_empty() {
@@ -333,7 +343,13 @@ impl Vault {
             }
             entry.set_protected(fields::NOTES, input.notes.as_str());
         }
-        let fingerprint = persist(&path, &next, &session.key, Some(session.fingerprint))?;
+        let fingerprint = persist_when(
+            &path,
+            &next,
+            &session.key,
+            Some(session.fingerprint),
+            allowed,
+        )?;
         session.database = next;
         session.fingerprint = fingerprint;
         Ok(entry_id.uuid().to_string())
@@ -398,6 +414,16 @@ fn persist(
     key: &DatabaseKey,
     expected: Option<[u8; 32]>,
 ) -> Result<[u8; 32]> {
+    persist_when(path, db, key, expected, || true)
+}
+
+fn persist_when(
+    path: &Path,
+    db: &Database,
+    key: &DatabaseKey,
+    expected: Option<[u8; 32]>,
+    allowed: impl Fn() -> bool,
+) -> Result<[u8; 32]> {
     let mut encrypted = Vec::new();
     db.save(&mut encrypted, key.clone())
         .map_err(|_| VaultError::Save)?;
@@ -423,6 +449,9 @@ fn persist(
         temporary
             .persist_noclobber(path)
             .map_err(|_| VaultError::Exists)?;
+    }
+    if !allowed() {
+        return Err(VaultError::Changed);
     }
     Ok(Sha256::digest(encrypted).into())
 }

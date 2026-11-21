@@ -21,24 +21,31 @@ fn pipe_roundtrip_reuse_first_instance_and_slow_client_deadline() {
         }],
     };
     let value = expected.clone();
-    let _guard = start_server(move |_| value.clone()).unwrap();
-    assert!(start_server(|_| Response::empty(Status::Error)).is_err());
+    let sid = current_sid().unwrap();
+    let name = format!("{}-roundtrip-test-{}", pipe_name(&sid), std::process::id());
+    let _guard = start_named_server(sid.clone(), name.clone(), move |_| value.clone()).unwrap();
+    assert!(
+        start_named_server(sid.clone(), name.clone(), |_| Response::empty(
+            Status::Error
+        ))
+        .is_err()
+    );
     let request = Request::Match {
         version: 1,
         origin: "https://example.com".into(),
     };
-    for index in 0..20 {
+    for index in 0..300 {
         assert_eq!(
-            request_desktop(&request).unwrap_or_else(|error| panic!("request {index}: {error}")),
+            request_named(&name, &request)
+                .unwrap_or_else(|error| panic!("request {index}: {error}")),
             expected
         );
     }
     let runtime = Builder::new_current_thread().enable_all().build().unwrap();
-    let sid = current_sid().unwrap();
     runtime.block_on(async {
         let _idle_client = timeout(DEADLINE, async {
             loop {
-                match ClientOptions::new().open(pipe_name(&sid)) {
+                match ClientOptions::new().open(&name) {
                     Ok(pipe) => break pipe,
                     Err(error) if error.raw_os_error() == Some(ERROR_PIPE_BUSY as i32) => {
                         sleep(Duration::from_millis(10)).await
@@ -51,8 +58,8 @@ fn pipe_roundtrip_reuse_first_instance_and_slow_client_deadline() {
         .unwrap();
         sleep(DEADLINE + Duration::from_millis(100)).await;
     });
-    assert_eq!(request_desktop(&request).unwrap(), expected);
-    assert!(start_server(|_| Response::empty(Status::Error)).is_err());
+    assert_eq!(request_named(&name, &request).unwrap(), expected);
+    assert!(start_named_server(sid, name, |_| Response::empty(Status::Error)).is_err());
 }
 
 #[test]

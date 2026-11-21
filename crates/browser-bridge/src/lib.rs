@@ -37,6 +37,12 @@ pub enum Request {
         origin: String,
         request_id: String,
     },
+    ProposeSave {
+        version: u32,
+        origin: String,
+        credential: Credential,
+        change_form: bool,
+    },
 }
 
 impl Request {
@@ -45,7 +51,8 @@ impl Request {
             Self::Match { origin, .. }
             | Self::BeginFill { origin, .. }
             | Self::PollFill { origin, .. }
-            | Self::CancelFill { origin, .. } => origin,
+            | Self::CancelFill { origin, .. }
+            | Self::ProposeSave { origin, .. } => origin,
         }
     }
     pub fn validate(&self) -> io::Result<()> {
@@ -67,6 +74,23 @@ impl Request {
                 origin,
                 request_id,
             } => (*version, origin, Some(request_id), None),
+            Self::ProposeSave {
+                version,
+                origin,
+                credential,
+                change_form,
+            } => {
+                if credential.username.len() > 512
+                    || credential.username.chars().any(char::is_control)
+                    || (!change_form && credential.username.trim().is_empty())
+                    || credential.password.is_empty()
+                    || credential.password.len() > 1024
+                    || credential.password.contains('\0')
+                {
+                    return Err(invalid("Invalid proposed login."));
+                }
+                (*version, origin, None, None)
+            }
         };
         if version != PROTOCOL_VERSION
             || origin.is_empty()
@@ -365,7 +389,7 @@ mod windows {
         server: &mut NamedPipeServer,
         handler: &impl Fn(Request) -> Response,
     ) -> io::Result<()> {
-        let bytes = read_async(server, MAX_NATIVE_REQUEST_BYTES).await?;
+        let bytes = zeroize::Zeroizing::new(read_async(server, MAX_NATIVE_REQUEST_BYTES).await?);
         let response = match serde_json::from_slice::<Request>(&bytes) {
             Ok(request) if request.validate().is_ok() => {
                 // A faulty handler cannot kill the bridge. Handlers must be nonblocking
@@ -414,6 +438,13 @@ mod windows {
     ) -> io::Result<ServerGuard> {
         let sid = current_sid()?;
         let name = pipe_name(&sid);
+        start_named_server(sid, name, handler)
+    }
+    fn start_named_server(
+        sid: String,
+        name: String,
+        handler: impl Fn(Request) -> Response + Send + Sync + 'static,
+    ) -> io::Result<ServerGuard> {
         let (ready_tx, ready_rx) = mpsc::sync_channel(1);
         let (shutdown_tx, mut shutdown_rx) = oneshot::channel();
         thread::Builder::new()
@@ -444,9 +475,20 @@ mod windows {
                             _ = &mut shutdown_rx => break,
                             connected = server.connect() => { if connected.is_err() { break; } }
                         }
-                        let next = match create_server(&sid, &name, false) {
-                            Ok(value) => value,
-                            Err(_) => break,
+                        let next = tokio::select! {
+                            _ = &mut shutdown_rx => break,
+                            next = timeout(DEADLINE, async {
+                                loop {
+                                    match create_server(&sid, &name, false) {
+                                        Err(e) if e.raw_os_error() == Some(ERROR_PIPE_BUSY as i32) =>
+                                            sleep(Duration::from_millis(5)).await,
+                                        result => break result,
+                                    }
+                                }
+                            }) => match next {
+                                Ok(Ok(server)) => server,
+                                _ => break,
+                            },
                         };
                         tokio::select! {
                             _ = &mut shutdown_rx => break,
@@ -470,16 +512,20 @@ mod windows {
 
     /// Synchronous native-host client. Call from a regular thread, not a Tokio task.
     pub fn request_desktop(request: &Request) -> io::Result<Response> {
+        request_named(&pipe_name(&current_sid()?), request)
+    }
+    fn request_named(name: &str, request: &Request) -> io::Result<Response> {
         request.validate()?;
-        let bytes = serde_json::to_vec(request)
-            .map_err(|_| invalid("Couldn't serialize suggestion request."))?;
+        let bytes = zeroize::Zeroizing::new(
+            serde_json::to_vec(request)
+                .map_err(|_| invalid("Couldn't serialize suggestion request."))?,
+        );
         check_length(bytes.len(), MAX_NATIVE_REQUEST_BYTES)?;
-        let name = pipe_name(&current_sid()?);
         let runtime = Builder::new_current_thread().enable_all().build()?;
         runtime.block_on(async {
             timeout(DEADLINE, async {
                 let mut pipe = loop {
-                    match ClientOptions::new().open(&name) {
+                    match ClientOptions::new().open(name) {
                         Ok(pipe) => break pipe,
                         Err(error) if error.raw_os_error() == Some(ERROR_PIPE_BUSY as i32) => {
                             sleep(Duration::from_millis(25)).await

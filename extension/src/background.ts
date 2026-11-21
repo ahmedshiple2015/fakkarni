@@ -1,6 +1,7 @@
 import { httpsOrigin, validateCredential, validateResponse } from "./validators.js";
 import { fillLogin } from "./fill.js";
 import type { FillPort } from "./handoff.js";
+import { createCaptureWorker, type CaptureSender } from "./capture-worker.js";
 
 type Tab = { id?: number; url?: string; windowId?: number };
 type Api = {
@@ -8,16 +9,23 @@ type Api = {
     query(query: {active: boolean; currentWindow: boolean}): Promise<Tab[]>;
     get(id: number): Promise<Tab>;
     update(id: number, options: {active: boolean}): Promise<unknown>;
-    onUpdated: {addListener(callback: (id: number, change: {url?: string; status?: string}) => void): void};
+    onUpdated: {addListener(callback: (id: number, change: {url?: string; status?: string}, tab?: Tab) => void): void};
     onRemoved: {addListener(callback: (id: number) => void): void};
   };
   windows: {update(id: number, options: {focused: boolean}): Promise<unknown>};
   scripting: {executeScript(options: {target: {tabId: number; frameIds?: number[]; documentIds?: string[]}; func: typeof fillLogin | typeof capturePage; args: [string,string,string,string] | [string]}): Promise<{frameId: number; documentId?: string; result?: string | boolean}[]>};
   action: {setBadgeText(options: {tabId: number; text: string}): Promise<void>; setTitle(options: {tabId: number; title: string}): Promise<void>};
+  notifications?: {
+    create(id: string, options: {type: "basic"; iconUrl: string; title: string; message: string; buttons?: {title: string}[]}): Promise<string>;
+    clear(id: string): Promise<boolean>;
+    onButtonClicked: {addListener(callback: (id: string, index: number) => void): void};
+    onClicked: {addListener(callback: (id: string) => void): void};
+    onClosed: {addListener(callback: (id: string, byUser: boolean) => void): void};
+  };
   runtime: {
     id: string; getURL(path: string): string;
     sendNativeMessage(host: string, message: unknown): Promise<unknown>;
-    onMessage: {addListener(callback: (message: unknown, sender: {id?: string; url?: string}, respond: (response: unknown) => void) => boolean): void};
+    onMessage: {addListener(callback: (message: unknown, sender: CaptureSender, respond: (response: unknown) => void) => boolean): void};
     onConnect: {addListener(callback: (port: FillPort & {name: string; sender?: {id?: string; url?: string}}) => void): void};
   };
 };
@@ -113,8 +121,44 @@ export function createCoordinator(api: Api, wait = (ms: number) => new Promise<v
 /** Acknowledge before native handoff can focus the desktop and close the popup. */
 export function installWorker(api: Api) {
   const coordinator = createCoordinator(api);
-  api.tabs.onUpdated.addListener((id, change) => { if (change.url !== undefined || change.status === "loading") coordinator.invalidate(id); });
-  api.tabs.onRemoved.addListener(id => coordinator.invalidate(id));
+  const notifications = api.notifications;
+  const iconUrl = api.runtime.getURL("icons/fakkarni.png");
+  const capture = createCaptureWorker({
+    active: async () => (await api.tabs.query({active: true, currentWindow: true}))[0],
+    tab: id => api.tabs.get(id),
+    indicator: (id, text) => api.action.setBadgeText({tabId: id, text}),
+    notify: async (id, origin) => notifications?.create(id, {
+      type: "basic", iconUrl, title: "Save this login?",
+      message: `Review the login for ${new URL(origin).host} in Fakkarni after the site accepts it.`,
+      buttons: [{title: "Review login"}, {title: "Discard"}],
+    }),
+    clearNotice: async id => notifications?.clear(id),
+    propose: async (origin, username, password, changeForm) => {
+      const result = validateResponse(await api.runtime.sendNativeMessage(host, {
+        action: "propose_save", version: 1, origin, credential: {username, password}, change_form: changeForm,
+      }));
+      return result?.status ?? "error";
+    },
+  });
+  const reviewNotice = async (id: string) => {
+    const state = await capture.reviewNotice(id);
+    if (state === "pending" || state === "changed") return;
+    await notifications?.create("fakkarni-save-unavailable", {
+      type: "basic", iconUrl, title: "Couldn’t open the save review",
+      message: "Open and unlock Fakkarni, then check the extension’s Save badge to retry.",
+    });
+  };
+  notifications?.onClicked.addListener(id => { void reviewNotice(id).catch(() => {}); });
+  notifications?.onButtonClicked.addListener((id, index) => {
+    if (index === 0) void reviewNotice(id).catch(() => {});
+    if (index === 1) capture.dismiss(id);
+  });
+  notifications?.onClosed.addListener((id, byUser) => { if (byUser) capture.noticeClosed(id); });
+  api.tabs.onUpdated.addListener((id, change, tab) => {
+    if (change.url !== undefined || change.status === "loading") coordinator.invalidate(id);
+    capture.updated(id, change, tab);
+  });
+  api.tabs.onRemoved.addListener(id => { coordinator.invalidate(id); capture.remove(id); });
   api.runtime.onConnect.addListener(port => {
     if (port.name !== "fakkarni-fill" || port.sender?.id !== api.runtime.id ||
         port.sender.url !== api.runtime.getURL("popup.html")) {
@@ -141,7 +185,16 @@ export function installWorker(api: Api) {
     });
   });
   api.runtime.onMessage.addListener((message, sender, respond) => {
-    if (sender.id !== api.runtime.id || sender.url !== api.runtime.getURL("popup.html")) return false;
+    if (sender.id !== api.runtime.id) return false;
+    if (isRecord(message) && message.action === "capture_candidate") {
+      capture.capture(message, sender);
+      return false;
+    }
+    if (sender.url !== api.runtime.getURL("popup.html")) return false;
+    if (isRecord(message) && ["capture_status", "capture_discard", "capture_review"].includes(String(message.action))) {
+      void capture.popup(message).then(respond, () => respond({ state: "error" }));
+      return true;
+    }
     if (!isRecord(message) || message.action !== "fill_account" || typeof message.tabId !== "number") {
       respond({ok: false});
       return false;

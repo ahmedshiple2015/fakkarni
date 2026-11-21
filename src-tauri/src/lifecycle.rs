@@ -140,6 +140,30 @@ fn startup_command(executable: &Path) -> Result<String, String> {
     Ok(format!("\"{text}\" --autostart"))
 }
 
+#[cfg(windows)]
+pub(super) fn reconcile_installed_startup(
+    executable: &Path,
+    installing: bool,
+) -> Result<(), String> {
+    let command = startup_command(executable)?;
+    let current = CurrentUserStartup.read()?;
+    if installing {
+        // Migrate an existing opt-in, but do not enable startup on a clean PC.
+        if current
+            .as_deref()
+            .is_some_and(|value| value.ends_with("\" --autostart"))
+        {
+            CurrentUserStartup.write(Some(&command))?;
+        }
+    } else if current
+        .as_deref()
+        .is_some_and(|value| value.eq_ignore_ascii_case(&command))
+    {
+        CurrentUserStartup.write(None)?;
+    }
+    Ok(())
+}
+
 fn save_settings(
     path: &Path,
     settings: &AppSettings,

@@ -303,6 +303,70 @@ pub(super) async fn repair_browser_bridge(app: tauri::AppHandle) -> Result<Repai
 }
 
 #[cfg(windows)]
+pub(super) fn installer_registration(installing: bool) -> Result<(), String> {
+    use windows_registry::CURRENT_USER;
+    let desktop = std::env::current_exe().map_err(|_| "Could not locate installed Fakkarni.")?;
+    let local = std::env::var_os("LOCALAPPDATA")
+        .map(std::path::PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .ok_or("Local AppData is unavailable.")?;
+    let directory = local.join("org.fakkarni.desktop").join("native-messaging");
+    let _gate = shared_gate::acquire()?;
+    if installing {
+        install(&desktop, &directory, &CurrentUserRegistrar)?;
+    } else {
+        // A different installation may own these registrations. Do not remove
+        // them unless both the configuration and the registry point to ours.
+        let config = fs::File::open(directory.join("desktop-path.json"))
+            .ok()
+            .and_then(|file| {
+                let mut bytes = Vec::new();
+                file.take(MAX_METADATA_BYTES as u64 + 1)
+                    .read_to_end(&mut bytes)
+                    .ok()?;
+                if bytes.len() > MAX_METADATA_BYTES {
+                    return None;
+                }
+                serde_json::from_slice::<LaunchConfig>(&bytes).ok()
+            });
+        if config.is_some_and(|config| {
+            desktop
+                .to_string_lossy()
+                .eq_ignore_ascii_case(&config.desktop_exe_full_path)
+        }) {
+            let manifest = directory.join("org.fakkarni.bridge.json");
+            for path in REGISTRY_PATHS {
+                for view in VIEWS {
+                    if CurrentUserRegistrar.matches(path, view, &manifest.to_string_lossy())? {
+                        CURRENT_USER
+                            .options()
+                            .write()
+                            .access(view.access())
+                            .open(path)
+                            .and_then(|key| key.remove_value(""))
+                            .map_err(|_| "Could not remove the browser registration.")?;
+                    }
+                }
+            }
+            for name in [
+                "org.fakkarni.bridge.json",
+                "desktop-path.json",
+                "fakkarni-native-host.exe",
+            ] {
+                match fs::remove_file(directory.join(name)) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(_) => {
+                        return Err("Close the browsers to remove the native bridge files.".into())
+                    }
+                }
+            }
+        }
+    }
+    crate::lifecycle::reconcile_installed_startup(&desktop, installing)
+}
+
+#[cfg(windows)]
 mod shared_gate {
     use std::{ffi::c_void, ptr};
     use windows_sys::Win32::{

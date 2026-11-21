@@ -32,6 +32,38 @@ function serviceIcon(url: string, title: string, className: string) {
   return wrapper;
 }
 let generation = 0;
+const capturePanel = document.querySelector<HTMLElement>("#capture-panel")!;
+const captureStatus = capturePanel.querySelector<HTMLElement>("#capture-status")!;
+const captureMain = capturePanel.querySelector<HTMLButtonElement>("#capture-main")!;
+const captureDiscard = capturePanel.querySelector<HTMLButtonElement>("#capture-discard")!;
+
+function bindCapture(tabId: number, current: number, send: (request: unknown) => Promise<unknown>) {
+  const run = async (action: string) => {
+    captureMain.disabled = captureDiscard.disabled = true;
+    try {
+      const result = await send({action, tabId}) as {state?: string; username?: string} | null;
+      if (current !== generation) return;
+      const state = result?.state;
+      if (!state) return;
+      const canReview = ["ready", "locked", "unavailable", "error"].includes(state);
+      capturePanel.hidden = state === "idle";
+      captureMain.hidden = captureDiscard.hidden = !canReview;
+      captureStatus.textContent = state === "ready"
+        ? `Submitted login${result.username ? `: ${result.username}` : ""}. Confirm the site accepted it, then review in Fakkarni.`
+        : state === "pending" ? "Continue in Fakkarni. Unlock the vault if prompted."
+        : state === "locked" || state === "unavailable" ? "Open and unlock Fakkarni, then try reviewing the login again."
+        : state === "error" ? "Fakkarni could not prepare this login for review. You can add it in the desktop app."
+        : "The save request expired or the page changed.";
+      captureMain.onclick = () => { void run("capture_review"); };
+      captureDiscard.onclick = () => { void run("capture_discard"); };
+    } catch {
+      if (current === generation && !capturePanel.hidden) captureStatus.textContent = "Reload Fakkarni on the browser’s extensions page and try again.";
+    } finally {
+      if (current === generation) captureMain.disabled = captureDiscard.disabled = false;
+    }
+  };
+  void run("capture_status");
+}
 const setConnection = (status: "checking" | "connected" | "locked" | "unavailable", label: string) => {
   connection.dataset.status = status;
   connection.textContent = label;
@@ -42,6 +74,7 @@ const setState = (message: string) => {
 
 async function load() {
   const current = ++generation;
+  capturePanel.hidden = true;
   list.replaceChildren();
   hint.hidden = true;
   originLabel.textContent = "Checking active site…";
@@ -76,6 +109,7 @@ async function load() {
       return;
     }
     const website = new URL(origin).host;
+    bindCapture(tab.id, current, request => api.runtime.sendMessage(request));
     originLabel.textContent = website;
     originLabel.title = origin;
     siteIcon.replaceChildren(...Array.from(serviceIcon(origin, website, "site-icon").childNodes));

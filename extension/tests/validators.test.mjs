@@ -116,10 +116,12 @@ test("manifest identity matches native host registration and permissions stay mi
     .replace(/[0-9a-f]/g, (c) => String.fromCharCode(97 + parseInt(c, 16)));
   assert.equal(identity.extensionId, expected);
   assert.equal(identity.nativeHost, "org.fakkarni.bridge");
-  assert.deepEqual(manifest.permissions, ["activeTab", "nativeMessaging", "scripting"]);
+  assert.deepEqual(manifest.permissions, ["activeTab", "nativeMessaging", "scripting", "notifications"]);
+  assert.deepEqual(manifest.content_scripts, [
+    {matches: ["https://*/*"], js: ["dist/capture.js"], run_at: "document_start"},
+  ]);
   assert.deepEqual(manifest.background, {service_worker: "dist/background.js", type: "module"});
-  assert.equal(manifest.host_permissions, undefined);
-  assert.equal(manifest.content_scripts, undefined);
+  assert.deepEqual(manifest.host_permissions, ["https://*/*"]);
 });
 
 test("locked suggestions contain only bounded metadata; credential channel is separate", () => {

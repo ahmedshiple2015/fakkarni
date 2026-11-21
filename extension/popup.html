@@ -25,6 +25,14 @@
         <ul id="matches" aria-label="Matching accounts"></ul>
         <p id="hint" class="hint" hidden>Unlock in Fakkarni to continue. You review and submit the form.</p>
       </section>
+      <section class="capture" id="capture-panel" aria-labelledby="capture-heading" hidden>
+        <h2 id="capture-heading">Save a login</h2>
+        <p id="capture-status" role="status"></p>
+        <div class="capture-actions">
+          <button id="capture-main" type="button">Review in Fakkarni</button>
+          <button id="capture-discard" type="button" hidden>Discard</button>
+        </div>
+      </section>
     </main>
     <footer>
       <button id="refresh" type="button" aria-label="Refresh accounts" title="Refresh accounts"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7v5h-5"/><path d="M4 17v-5h5"/><path d="M6.1 7a7 7 0 0 1 11.6-1L20 9M4 15l2.3 3A7 7 0 0 0 17.9 17"/></svg><span>Refresh</span></button>

@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+aes-gcm = { version = "0.10", features = ["zeroize"] }
 keepass = { version = "=0.15.2", features = ["save_kdbx4"] }
 rust-argon2 = "3"
 fs2 = "0.4"

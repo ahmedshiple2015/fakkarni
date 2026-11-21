@@ -3,6 +3,7 @@
 mod backup;
 mod bridge_setup;
 mod browser;
+mod browser_save;
 mod browser_unlock;
 mod credentials;
 mod hello;
@@ -316,6 +317,18 @@ async fn delete_entry(
 }
 
 fn main() {
+    #[cfg(windows)]
+    if let Some(command) = std::env::args().nth(1) {
+        let installing = match command.as_str() {
+            "--installer-register" => Some(true),
+            "--installer-unregister" => Some(false),
+            _ => None,
+        };
+        if let Some(installing) = installing {
+            let result = bridge_setup::installer_registration(installing);
+            std::process::exit(if result.is_ok() { 0 } else { 1 });
+        }
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             if !args
@@ -375,6 +388,7 @@ fn main() {
             let handle = app.handle().clone();
             std::thread::spawn(move || {
                 let mut previously_unlocked = false;
+                let mut previous_epoch = vault.epoch.load(Ordering::SeqCst);
                 loop {
                     std::thread::sleep(std::time::Duration::from_secs(1));
                     if let Ok(mut inner) = vault.inner.lock() {
@@ -384,17 +398,25 @@ fn main() {
                             inner.epoch = epoch;
                         }
                         let unlocked = inner.vault.status().unlocked;
-                        if !unlocked {
-                            browser_state.revoke_ready();
-                        }
                         if unlocked {
                             browser_state.refresh(&mut inner.vault);
                         }
                         if previously_unlocked && !unlocked {
-                            vault.epoch.fetch_add(1, Ordering::SeqCst);
+                            if epoch == previous_epoch {
+                                let _ = vault.epoch.compare_exchange(
+                                    epoch,
+                                    epoch + 1,
+                                    Ordering::SeqCst,
+                                    Ordering::SeqCst,
+                                );
+                            }
                             inner.epoch = vault.epoch.load(Ordering::SeqCst);
                             let _ = handle.emit("vault-locked", ());
                         }
+                        if !unlocked {
+                            browser_state.revoke_ready(&vault);
+                        }
+                        previous_epoch = inner.epoch;
                         previously_unlocked = unlocked;
                     }
                     browser_state.complete_after_unlock(&vault);
@@ -420,6 +442,8 @@ fn main() {
             hello::unlock_hello,
             hello::disable_hello,
             browser::browser_pending,
+            browser::browser_save_pending,
+            browser::resolve_browser_save,
             browser::reject_browser_fill,
             browser::browser_settings,
             browser::set_browser_settings,
@@ -430,6 +454,8 @@ fn main() {
             backup::cancel_restore,
             backup::commit_restore,
             credentials::change_master_password,
+            credentials::recover_master_password,
+            credentials::export_recovery_key,
             bridge_setup::repair_browser_bridge
         ])
         .run(tauri::generate_context!())

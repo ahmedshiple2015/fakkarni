@@ -22,3 +22,8 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo test --workspace --locked
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Build Windows release
+        run: ./scripts/build-release.ps1
+      - name: Smoke test installer on the runner
+        timeout-minutes: 5
+        run: ./scripts/test-installer.ps1

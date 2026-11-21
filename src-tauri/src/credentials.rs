@@ -2,10 +2,11 @@
 use crate::{browser::BrowserState, hello::HelloState, Shared};
 use serde::Serialize;
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{atomic::Ordering, Arc},
 };
-use tauri::{Emitter, State};
+use tauri::{Emitter, Manager, State, WebviewWindow};
+use tauri_plugin_dialog::DialogExt;
 use zeroize::Zeroizing;
 
 pub(super) struct CredentialsState {
@@ -63,6 +64,22 @@ fn commit_change(
         .vault
         .change_master_password(current_password, new_password, &data_dir.join("backups"))
         .map_err(|error| error.to_string())?;
+    Ok(finish_change(
+        data_dir,
+        vault,
+        &mut guard,
+        browser,
+        Some(recovery_path),
+    ))
+}
+
+fn finish_change(
+    data_dir: &Path,
+    vault: &Shared,
+    guard: &mut crate::GuardedVault,
+    browser: &BrowserState,
+    recovery_path: Option<PathBuf>,
+) -> ChangeReport {
     // Publication has succeeded. Cleanup failures are warnings, never a false
     // failure that might cause someone to continue relying on their old password.
     vault.epoch.fetch_add(1, Ordering::SeqCst);
@@ -78,10 +95,177 @@ fn commit_change(
     if let Err(error) = manager.disable() {
         warnings.push(format!("Password changed. PIN setup cleanup: {error}"));
     }
-    Ok(ChangeReport {
-        recovery_path: recovery_path.display().to_string(),
+    ChangeReport {
+        recovery_path: recovery_path
+            .map(|p| p.display().to_string())
+            .unwrap_or_default(),
         warnings,
+    }
+}
+
+fn local_path(path: tauri_plugin_dialog::FilePath) -> Result<PathBuf, String> {
+    path.into_path()
+        .ok()
+        .filter(|p| p.is_absolute())
+        .ok_or_else(|| "Choose a local file.".into())
+}
+
+#[tauri::command]
+pub(super) async fn export_recovery_key(
+    vault: State<'_, Shared>,
+    hello: State<'_, HelloState>,
+    window: WebviewWindow,
+    password: String,
+) -> Result<Option<String>, String> {
+    let password = Zeroizing::new(password);
+    let vault = vault.inner().clone();
+    let gate = hello.credential_gate();
+    let epoch = vault.epoch.load(Ordering::SeqCst);
+    tauri::async_runtime::spawn_blocking(move || {
+        let _gate = gate
+            .try_lock()
+            .map_err(|_| "Another credential operation is in progress.")?;
+        let Some(file) = window
+            .dialog()
+            .file()
+            .set_parent(&window)
+            .set_title("Save encrypted recovery file")
+            .add_filter("Fakkarni recovery", &["fkrec"])
+            .set_file_name("Fakkarni-recovery.fkrec")
+            .blocking_save_file()
+        else {
+            return Ok(None);
+        };
+        let path = local_path(file)?;
+        let key = crate::run_operation(&vault, epoch, |v| {
+            v.export_recovery_envelope(&password, &path, || {
+                !vault.blocked() && vault.epoch.load(Ordering::SeqCst) == epoch
+            })
+            .map_err(|e| e.to_string())
+        })?;
+        Ok(Some(key.to_string()))
     })
+    .await
+    .map_err(|_| "Could not create a recovery key.")?
+}
+
+#[tauri::command]
+pub(super) async fn recover_master_password(
+    state: State<'_, CredentialsState>,
+    vault: State<'_, Shared>,
+    browser: State<'_, Arc<BrowserState>>,
+    hello: State<'_, HelloState>,
+    window: WebviewWindow,
+    recovery_key: Option<String>,
+    new_password: String,
+) -> Result<Option<ChangeReport>, String> {
+    let app = window.app_handle().clone();
+    let recovery_key = recovery_key.map(Zeroizing::new);
+    let new_password = Zeroizing::new(new_password);
+    if new_password.chars().count() < 12 || new_password.len() > 1024 {
+        return Err("Use at least 12 characters and no more than 1,024 bytes.".into());
+    }
+    let hwnd = if recovery_key.is_none() {
+        Some(crate::hello::window_handle(&window)?)
+    } else {
+        None
+    };
+    let data_dir = state.data_dir.clone();
+    let vault = vault.inner().clone();
+    let browser = browser.inner().clone();
+    let manager = hello.manager();
+    let gate = hello.credential_gate();
+    let epoch = vault.epoch.load(Ordering::SeqCst);
+    tauri::async_runtime::spawn_blocking(move || {
+        let _gate = gate
+            .try_lock()
+            .map_err(|_| "Another credential operation is in progress.")?;
+        let allowed = || !vault.blocked() && vault.epoch.load(Ordering::SeqCst) == epoch;
+        let stamp = crate::run_operation(&vault, epoch, |v| {
+            if v.status().exists {
+                v.recovery_stamp().map(Some).map_err(|e| e.to_string())
+            } else {
+                Ok(None)
+            }
+        })?;
+        let (secret, source) = if let Some(key) = recovery_key {
+            let Some(file) = window
+                .dialog()
+                .file()
+                .set_parent(&window)
+                .set_title("Choose your encrypted recovery file")
+                .add_filter("Fakkarni recovery", &["fkrec"])
+                .blocking_pick_file()
+            else {
+                return Ok(None);
+            };
+            let secret = fakkarni_vault::recovery::open_envelope(&local_path(file)?, &key)
+                .map_err(|e| e.to_string())?;
+            let source = if stamp.is_none() {
+                let Some(file) = window
+                    .dialog()
+                    .file()
+                    .set_parent(&window)
+                    .set_title("Choose the matching encrypted vault backup")
+                    .add_filter("KeePass vault", &["kdbx"])
+                    .blocking_pick_file()
+                else {
+                    return Ok(None);
+                };
+                Some(local_path(file)?)
+            } else {
+                None
+            };
+            (secret, source)
+        } else {
+            if stamp.is_none() || !allowed() {
+                return Err("No vault is available for PIN recovery.".into());
+            }
+            let secret = manager.unlock(hwnd.ok_or("PIN window unavailable.")?)?;
+            (
+                fakkarni_vault::recovery::RecoverySecret {
+                    password: secret.password,
+                    identity: secret.vault_id,
+                    generation: None,
+                },
+                None,
+            )
+        };
+        let mut guard = vault.inner.lock().map_err(|_| "Vault unavailable.")?;
+        if guard.epoch != epoch || !allowed() {
+            return Err("Recovery was cancelled by locking.".into());
+        }
+        let recovery_path = if let Some(stamp) = stamp {
+            Some(
+                guard
+                    .vault
+                    .recover_password(
+                        &secret,
+                        stamp,
+                        &new_password,
+                        &data_dir.join("backups"),
+                        allowed,
+                    )
+                    .map_err(|e| e.to_string())?,
+            )
+        } else {
+            guard
+                .vault
+                .recover_into_empty(
+                    &source.ok_or("Choose a vault backup.")?,
+                    &secret,
+                    &new_password,
+                    allowed,
+                )
+                .map_err(|e| e.to_string())?;
+            None
+        };
+        let report = finish_change(&data_dir, &vault, &mut guard, &browser, recovery_path);
+        let _ = app.emit("vault-locked", ());
+        Ok(Some(report))
+    })
+    .await
+    .map_err(|_| "Recovery stopped unexpectedly. Check which password opens your vault.")?
 }
 
 #[cfg(test)]

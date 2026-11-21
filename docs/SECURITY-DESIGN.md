@@ -54,3 +54,9 @@ Selecting an account in the extension fills it immediately while unlocked. If lo
 The local pipe is not proof of browser identity. Removing desktop approval intentionally trusts programs running as the current Windows user: those programs can request a credential while unlocked, or queue a fill that completes after unlock. A random request ID protects consumption/replay but is not authentication of the requesting executable. This prototype does not claim protection from malicious programs under the current Windows account. See [browser setup and boundaries](BRAVE.md).
 
 The optional locked-account index exposes account metadata locally after explicit opt-in, while preserving password encryption.
+## Release candidate review
+
+- A PIN reset requires fresh Windows Hello verification. The native recovery code checks the encrypted vault snapshot, identity, and lock epoch before publishing a replacement. The old master password stays in native code.
+- Offline recovery encrypts the existing master password with an independently generated 256-bit key using AES-256-GCM. The authenticated header binds the envelope to the vault and its recovery generation. Anyone holding a matching key, envelope, and backup can recover that backup offline.
+- An isolated extension script detects eligible submissions on top-level HTTPS pages. The proposal stays in memory and goes to the native bridge only after the user chooses to review it. The desktop UI receives metadata, and the native save path checks the vault snapshot and session again before applying an explicit approval. A trusted submit event does not prove that a website accepted the credentials.
+- The local bridge assumes the Windows account and browser extension are trusted. Same-user malware and a compromised browser can access data available to those processes. The installer is unsigned and the project has no independent security audit.

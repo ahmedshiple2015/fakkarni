@@ -32,6 +32,38 @@ fn stored_origin_matches(stored: &str, origin: &str) -> bool {
 }
 
 impl Vault {
+    pub fn browser_save_options(
+        &mut self,
+        origin: &str,
+        username: &str,
+    ) -> Result<([u8; 32], Vec<EntrySummary>)> {
+        self.expire();
+        let session = self.session.as_ref().ok_or(VaultError::Locked)?;
+        let origin = validate_origin(origin)?;
+        let entries = session
+            .database
+            .iter_all_entries()
+            .filter(|entry| {
+                stored_origin_matches(entry.get(fields::URL).unwrap_or_default(), &origin)
+                    && (username.is_empty()
+                        || entry.get(fields::USERNAME).unwrap_or_default() == username)
+            })
+            .take(51)
+            .map(|entry| EntrySummary {
+                id: entry.id().uuid().to_string(),
+                title: entry.get(fields::TITLE).unwrap_or_default().into(),
+                username: entry.get(fields::USERNAME).unwrap_or_default().into(),
+                url: entry.get(fields::URL).unwrap_or_default().into(),
+            })
+            .collect::<Vec<_>>();
+        if entries.len() > 50 {
+            return Err(VaultError::Invalid(
+                "Too many matching accounts. Edit the login in Fakkarni.",
+            ));
+        }
+        Ok((session.fingerprint, entries))
+    }
+
     /// Bounded metadata snapshot for the optional local locked-account index.
     /// Background refresh never extends the user's idle unlock session.
     pub fn browser_index(&mut self) -> Result<Vec<EntrySummary>> {

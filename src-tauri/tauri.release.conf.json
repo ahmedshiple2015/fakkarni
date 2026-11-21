@@ -1,0 +1,21 @@
+{
+  "version": "0.3.3",
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "publisher": "Fakkarni",
+    "icon": ["icons/icon.ico"],
+    "licenseFile": "../LICENSE",
+    "resources": {
+      "../target/release/fakkarni-native-host.exe": "fakkarni-native-host.exe",
+      "../target/release-assets/browser-extension/": "browser-extension/"
+    },
+    "windows": {
+      "allowDowngrades": false,
+      "nsis": {
+        "installMode": "currentUser",
+        "installerHooks": "windows/hooks.nsh"
+      }
+    }
+  }
+}

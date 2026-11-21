@@ -37,7 +37,7 @@ pub(super) struct HelloStatus {
     reason: Option<String>,
 }
 
-fn window_handle(window: &WebviewWindow) -> Result<isize, String> {
+pub(super) fn window_handle(window: &WebviewWindow) -> Result<isize, String> {
     #[cfg(windows)]
     {
         Ok(window

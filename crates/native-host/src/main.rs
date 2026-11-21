@@ -40,7 +40,7 @@ fn handle_with(
     }
     let request = read_frame(input, MAX_NATIVE_REQUEST_BYTES)
         .ok()
-        .and_then(|bytes| serde_json::from_slice::<Request>(&bytes).ok());
+        .and_then(|bytes| serde_json::from_slice::<Request>(&zeroize::Zeroizing::new(bytes)).ok());
     let Some(request) = request else {
         return error_response();
     };
@@ -55,7 +55,11 @@ fn handle_with(
         // opt-in account metadata is available here, never encrypted-vault data.
         return cached_matches(origin, cache());
     }
-    if !matches!(request, Request::BeginFill { .. }) || launch(&request).is_err() {
+    if !matches!(
+        request,
+        Request::BeginFill { .. } | Request::ProposeSave { .. }
+    ) || launch(&request).is_err()
+    {
         return Response::empty(Status::Unavailable);
     }
     // Cold Tauri/WebView startup can exceed three seconds on an ordinary PC.
@@ -101,15 +105,21 @@ fn cached_matches(origin: &str, index: Option<Index>) -> Response {
 }
 
 fn launch_desktop(request: &Request) -> io::Result<()> {
-    let Request::BeginFill { request_id, .. } = request else {
+    if !matches!(
+        request,
+        Request::BeginFill { .. } | Request::ProposeSave { .. }
+    ) {
         return Err(io::Error::other(
-            "Only an account selection can launch the desktop",
+            "Only an explicit browser action can launch the desktop",
         ));
-    };
+    }
     #[cfg(windows)]
-    let owner = fakkarni_browser_bridge::prompt_owner::StartupOwner::capture(request_id);
-    #[cfg(not(windows))]
-    let _ = request_id;
+    let owner = match request {
+        Request::BeginFill { request_id, .. } => {
+            fakkarni_browser_bridge::prompt_owner::StartupOwner::capture(request_id)
+        }
+        _ => None,
+    };
     #[derive(serde::Deserialize)]
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
     struct Config {
@@ -332,6 +342,44 @@ mod tests {
             },
         );
         assert_eq!(launches, 1);
+        assert_eq!(attempts, 2);
+        assert_eq!(response.status, Status::Pending);
+        assert!(response.credential.is_none());
+    }
+
+    #[test]
+    fn closed_desktop_launches_for_explicit_save_review() {
+        let request = Request::ProposeSave {
+            version: 1,
+            origin: "https://example.test".into(),
+            credential: fakkarni_browser_bridge::Credential {
+                username: "synthetic-user".into(),
+                password: "synthetic password".into(),
+            },
+            change_form: false,
+        };
+        let mut started = false;
+        let mut attempts = 0;
+        let response = handle_with(
+            Some(EXTENSION_ORIGIN),
+            &mut framed(&request).as_slice(),
+            |received| {
+                assert_eq!(received, &request);
+                attempts += 1;
+                if attempts == 1 {
+                    unreachable(received)
+                } else {
+                    Ok(Response::empty(Status::Pending))
+                }
+            },
+            || panic!("Save review read account cache"),
+            |received| {
+                assert_eq!(received, &request);
+                started = true;
+                Ok(())
+            },
+        );
+        assert!(started);
         assert_eq!(attempts, 2);
         assert_eq!(response.status, Status::Pending);
         assert!(response.credential.is_none());

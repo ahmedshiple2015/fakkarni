@@ -2,9 +2,9 @@
 
 A local-only, open-source desktop password manager for Windows. It runs as a normal desktop program; the Microsoft Store is not required.
 
-**Status:** early desktop prototype, not a production release. Use synthetic credentials while storage, recovery, Windows integration, and interoperability are being validated. The KDBX writing library is experimental; see [the library decision](docs/LIBRARY-DECISION.md).
+**Status:** 0.3.3 release candidate for Windows x64. Use a disposable vault for initial testing. The KDBX writing library is experimental. See [release instructions](docs/RELEASE.md) and [the library decision](docs/LIBRARY-DECISION.md).
 
-## Implemented in the prototype
+## Features
 
 - Rust vault core with encrypted KDBX 4.1 storage and Argon2id (64 MiB, three passes).
 - Create, unlock, lock, add/edit/delete logins, and secure random password generation.
@@ -17,7 +17,7 @@ A local-only, open-source desktop password manager for Windows. It runs as a nor
 - System tray with Open, Lock vault, and Quit; optional startup with Windows and opening in the tray.
 - Encrypted vault export, PC-to-PC import, validated restore previews, and preservation of the previous encrypted vault before replacement.
 
-The extension fills an explicitly selected login when the vault is unlocked, or automatically after unlocking. An optional unencrypted local account index shows names, usernames, and site origins while locked; passwords remain encrypted. Automatic saving, CSV/other-manager imports, and native-app detection are still pending. See [encrypted backup and PC transfer](docs/BACKUPS.md). See [Brave setup](docs/BRAVE.md) and [Windows Hello and desktop preferences](docs/DESKTOP.md).
+The extension fills an explicitly selected login when the vault is unlocked, or automatically after unlocking. An optional unencrypted local account index shows names, usernames, and site origins while locked. The extension detects supported login, registration, and password-change forms after you submit them and offers a notification. Choose **Review login**, then approve the save in Fakkarni. See [encrypted backup, recovery, and PC transfer](docs/BACKUPS.md), [Brave setup](docs/BRAVE.md), and [Windows Hello and desktop preferences](docs/DESKTOP.md).
 
 ## Run locally
 

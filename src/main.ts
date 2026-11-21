@@ -181,11 +181,27 @@ function locked() {
     : hello.reason || (hello.enabled ? "Windows handles your PIN, fingerprint, or face. Fakkarni never receives your Windows PIN." : "Enable PIN from inside your vault for quicker unlocking.");
   unlockForm.after(helper);
   if (native) {
+    const recovery = document.createElement("div");
+    const recoveryKey = document.createElement("button");
+    recoveryKey.type = "button";
+    recoveryKey.className = "text-button import-action";
+    recoveryKey.textContent = status.exists ? "Recover with a recovery key" : "Recover an encrypted backup";
+    recoveryKey.addEventListener("click", () => recoveryDialog("key"));
+    recovery.append(recoveryKey);
+    if (status.exists && hello.available && hello.enabled) {
+      const pin = document.createElement("button");
+      pin.type = "button";
+      pin.className = "text-button import-action";
+      pin.textContent = "Reset master password with PIN";
+      pin.addEventListener("click", () => recoveryDialog("pin"));
+      recovery.append(pin);
+    }
+    helper.after(recovery);
     const restore = document.createElement("button");
     restore.className = "text-button import-action";
     restore.type = "button";
     restore.innerHTML = `${icon("folder")}<span>Import or restore an encrypted vault</span>`;
-    helper.after(restore);
+    recovery.after(restore);
     restore.addEventListener("click", restoreBackup);
     const repair = document.createElement("button");
     repair.type = "button";
@@ -355,6 +371,65 @@ function renderBrowserFill() {
     await invoke("reject_browser_fill", { requestId: request.requestId }).catch(() => {});
     await refreshBrowserFill();
   });
+}
+
+type BrowserSave = { token: string; origin: string; username: string;
+  accounts: { id: string; title: string; username: string; url: string }[] | null };
+let readingBrowserSave = false;
+async function refreshBrowserSave() {
+  if (!native || readingBrowserSave) return;
+  readingBrowserSave = true;
+  const generation = epoch;
+  try {
+    const request = await invoke<BrowserSave | null>("browser_save_pending");
+    if (generation !== epoch) return;
+    const previous = document.querySelector<HTMLElement>("#browser-save");
+    const awaitingUnlock = !status.unlocked || request?.accounts === null;
+    if (request && previous?.dataset.token === request.token &&
+        previous.dataset.awaitingUnlock === String(awaitingUnlock)) return;
+    previous?.remove();
+    if (!request) return;
+    const panel = document.createElement("section");
+    panel.id = "browser-save";
+    panel.dataset.token = request.token;
+    panel.dataset.awaitingUnlock = String(awaitingUnlock);
+    panel.className = "browser-fill";
+    panel.setAttribute("aria-labelledby", "browser-save-title");
+    const updating = !!request.accounts?.length;
+    panel.innerHTML = `<h2 id="browser-save-title">${awaitingUnlock ? "Unlock to review this login" : updating ? "Review password update" : "Review new login"}</h2>
+      <p class="fill-origin">${esc(request.origin)}</p><p>${esc(request.username || "Choose the account below.")}</p>
+      <p class="hint">${awaitingUnlock ? "Unlock with your PIN or master password to review and save." : "Confirm the website accepted the password before saving."}</p>
+      ${!awaitingUnlock && updating ? '<label for="browser-save-account">Saved account to update</label><select id="browser-save-account" required><option value="">Choose an account</option></select>' : ""}
+      <p role="status"></p><div class="modal-actions"><button type="button" class="secondary">Dismiss</button>
+      ${awaitingUnlock ? "" : `<button type="button" class="primary">${updating ? "Update password" : "Save login"}</button>`}</div>`;
+    document.querySelector("main .topbar")?.after(panel);
+    const select = panel.querySelector<HTMLSelectElement>("select");
+    if (select && request.accounts) {
+      for (const account of request.accounts) {
+        const option = new Option(`${account.title} · ${account.username || "No username"} · ${account.url}`, account.id);
+        select.add(option);
+      }
+    }
+    const resolve = async (approve: boolean) => {
+      if (approve && select && !select.value) { select.reportValidity(); return; }
+      panel.querySelectorAll<HTMLButtonElement>("button").forEach(button => { button.disabled = true; });
+      try {
+        await invoke("resolve_browser_save", { token: request.token, approve, entryId: select?.value || null });
+        panel.remove();
+        if (approve) { await refresh(); message(updating ? "Saved password updated." : "Login saved."); }
+      } catch (error) {
+        panel.remove();
+        message(String(error));
+      }
+    };
+    const approve = panel.querySelector<HTMLButtonElement>(".primary");
+    if (approve) approve.onclick = () => { void resolve(true); };
+    panel.querySelector<HTMLButtonElement>(".secondary")!.onclick = () => { void resolve(false); };
+  } catch (error) {
+    if (generation === epoch && document.querySelector("#browser-save")) message(String(error));
+    document.querySelector("#browser-save")?.remove();
+  }
+  finally { readingBrowserSave = false; }
 }
 function browserPreferences() {
   const section = document.createElement("section");
@@ -555,6 +630,130 @@ function masterPasswordSettings() {
   section.innerHTML = `<div class="setting-row"><div class="setting-copy"><h3>Master password</h3><p>Change the password that protects this vault.</p></div><button type="button" class="secondary" id="change-master-password" ${native ? "" : "disabled"}>Change master password</button></div>`;
   document.querySelector("#security-settings")!.append(section);
   section.querySelector("button")!.addEventListener("click", changeMasterPassword);
+  const row = document.createElement("div");
+  row.className = "setting-row";
+  row.innerHTML = '<div class="setting-copy"><h3>Offline recovery key</h3><p>Save an encrypted recovery file and keep its key separately.</p></div><button type="button" class="secondary">Create recovery key</button>';
+  section.append(row);
+  const button = row.querySelector("button")!;
+  button.disabled = !native;
+  button.addEventListener("click", () => recoveryDialog("export"));
+  if (native && hello.enabled && hello.available) {
+    const pin = document.createElement("button");
+    pin.type = "button";
+    pin.className = "text-button";
+    pin.textContent = "Reset master password with PIN";
+    pin.onclick = () => recoveryDialog("pin");
+    section.append(pin);
+  }
+}
+
+function recoveryDialog(mode: "export" | "key" | "pin") {
+  if (!native || document.querySelector("dialog")) return;
+  const origin = document.activeElement as HTMLElement | null;
+  const exporting = mode === "export";
+  const title = exporting ? "Create recovery key" : "Reset master password";
+  const description = exporting
+    ? "Save the encrypted recovery file and keep its key somewhere separate. After changing your master password, create a new recovery file and key."
+    : mode === "pin" ? "Windows will ask you to verify with PIN. You’ll set up PIN again after resetting your password."
+      : status.exists ? "Enter your recovery key, then choose its matching encrypted recovery file."
+        : "Enter your recovery key, then choose its encrypted recovery file and matching vault backup.";
+  const dialog = document.createElement("dialog");
+  dialog.className = "master-password-dialog";
+  dialog.setAttribute("aria-labelledby", "recovery-title");
+  dialog.innerHTML = `<form><h2 id="recovery-title">${title}</h2><p class="hint">${description}</p>
+    ${mode !== "pin" ? `<div class="auth-field"><label for="recovery-secret">${exporting ? "Current master password" : "Recovery key"}</label>${passwordControl("recovery-secret", exporting ? 'required maxlength="1024" autocomplete="current-password"' : 'required maxlength="64" autocomplete="off"', "recovery credential")}</div>` : ""}
+    ${!exporting ? `<div class="auth-field"><label for="recovery-new">New master password</label>${passwordControl("recovery-new", 'required minlength="12" maxlength="1024" autocomplete="new-password"', "new master password")}</div><div class="auth-field"><label for="recovery-repeat">Confirm new master password</label>${passwordControl("recovery-repeat", 'required minlength="12" maxlength="1024" autocomplete="new-password"', "new master password confirmation")}</div>` : ""}
+    <p role="status" aria-live="polite"></p><div class="modal-actions"><button type="button" class="secondary">Cancel</button><button type="submit" class="primary">${exporting ? "Save recovery file" : mode === "pin" ? "Verify PIN and reset" : "Choose recovery file"}</button></div></form>`;
+  app.append(dialog);
+  const form = dialog.querySelector("form")!;
+  const feedback = form.querySelector<HTMLElement>('[role="status"]')!;
+  let busy = false;
+  let keyShown = false;
+  const close = () => {
+    if (busy) return;
+    form.reset();
+    dialog.remove();
+    if (origin?.isConnected) origin.focus();
+  };
+  form.querySelector<HTMLButtonElement>('.modal-actions button[type="button"]')!.onclick = close;
+  dialog.addEventListener("cancel", event => { event.preventDefault(); close(); });
+  attachPasswordControls(form);
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
+    if (busy || keyShown) return;
+    const value = (id: string) => form.querySelector<HTMLInputElement>(`#${id}`)?.value ?? "";
+    const secret = value("recovery-secret");
+    const newPassword = value("recovery-new");
+    if (!exporting && (newPassword !== value("recovery-repeat") ||
+        Array.from(newPassword).length < 12 || new TextEncoder().encode(newPassword).length > 1024)) {
+      feedback.textContent = "Enter matching new passwords with at least 12 characters and no more than 1,024 bytes.";
+      return;
+    }
+    if (mode === "key" && !/^[a-f0-9]{64}$/i.test(secret.trim())) {
+      feedback.textContent = "Enter the full 64-character recovery key.";
+      return;
+    }
+    const generation = epoch;
+    busy = true;
+    form.reset();
+    const controls = form.querySelectorAll<HTMLInputElement | HTMLButtonElement>("input,button");
+    controls.forEach(control => { control.disabled = true; });
+    feedback.textContent = mode === "pin" ? "Complete the Windows PIN prompt…" : "Follow the file picker…";
+    try {
+      if (exporting) {
+        const key = await invoke<string | null>("export_recovery_key", { password: secret });
+        if (key && generation === epoch && dialog.isConnected) {
+          keyShown = true;
+          form.replaceChildren();
+          const heading = document.createElement("h2");
+          heading.id = "recovery-title";
+          heading.textContent = "Save your recovery key";
+          const hint = document.createElement("p");
+          hint.className = "hint";
+          hint.textContent = "Write down this key or save it in a secure place separate from the recovery file. Fakkarni won’t show it again.";
+          const field = document.createElement("input");
+          field.readOnly = true;
+          field.value = key;
+          field.setAttribute("aria-label", "Recovery key");
+          const done = document.createElement("button");
+          done.type = "button";
+          done.className = "primary";
+          done.textContent = "I saved the recovery key";
+          done.onclick = () => { field.value = ""; keyShown = false; close(); };
+          const discard = document.createElement("button");
+          discard.type = "button";
+          discard.className = "secondary";
+          discard.textContent = "Close without saving key";
+          discard.onclick = () => { field.value = ""; close(); };
+          const actions = document.createElement("div");
+          actions.className = "modal-actions";
+          actions.append(discard, done);
+          form.append(heading, hint, field, actions);
+          field.focus();
+          field.select();
+        } else feedback.textContent = "Recovery file setup cancelled.";
+      } else {
+        const report = await invoke<MasterPasswordReport | null>("recover_master_password", {
+          recoveryKey: mode === "key" ? secret : null, newPassword
+        });
+        if (report) {
+          clearSecrets();
+          await refresh();
+          message(`Master password reset. Unlock with your new password.${report.warnings.length ? ` ${report.warnings.join(" ")}` : ""}`);
+        } else feedback.textContent = "Recovery cancelled.";
+      }
+    } catch (error) {
+      if (generation === epoch && dialog.isConnected) feedback.textContent = String(error);
+    } finally {
+      busy = false;
+      if (!keyShown && dialog.isConnected) {
+        controls.forEach(control => { control.disabled = false; });
+        form.querySelector("input")?.focus();
+      }
+    }
+  });
+  dialog.showModal();
+  form.querySelector("input")?.focus();
 }
 function changeMasterPassword() {
   if (!native || !status.unlocked || document.querySelector("dialog")) return;
@@ -905,7 +1104,9 @@ if (native) {
     void refresh();
   });
   await listen("browser-fill-request", () => { void refreshBrowserFill(); });
+  await listen("browser-save-request", () => { void refreshBrowserSave(); });
   window.setInterval(() => { void refreshBrowserFill(); }, 1000);
+  window.setInterval(() => { void refreshBrowserSave(); }, 1000);
   await listen("vault-locked", () => {
     clearSecrets();
     status.unlocked = false;

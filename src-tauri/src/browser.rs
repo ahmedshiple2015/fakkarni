@@ -34,6 +34,7 @@ struct Inner {
     index: Index,
     pending: Option<Pending>,
     used_request_ids: Vec<(String, Instant)>,
+    save: Option<crate::browser_save::PendingSave>,
 }
 pub struct BrowserState {
     inner: Mutex<Inner>,
@@ -86,11 +87,15 @@ impl BrowserState {
                 index,
                 pending: None,
                 used_request_ids: Vec::new(),
+                save: None,
             }),
             path,
         }
     }
     fn expire(inner: &mut Inner) {
+        if inner.save.as_ref().is_some_and(|save| save.expired()) {
+            inner.save = None;
+        }
         inner
             .used_request_ids
             .retain(|(_, started)| started.elapsed() < LIFETIME);
@@ -102,9 +107,16 @@ impl BrowserState {
             inner.pending = None;
         }
     }
-    pub fn revoke_ready(&self) {
+    pub fn revoke_ready(&self, vault: &SharedState) {
         if let Ok(mut inner) = self.inner.try_lock() {
             Self::expire(&mut inner);
+            if inner
+                .save
+                .as_ref()
+                .is_some_and(|save| !save.awaiting_unlock() || !save.current(vault))
+            {
+                inner.save = None;
+            }
             if inner.pending.as_ref().is_some_and(|p| p.ready.is_some()) {
                 inner.pending = None;
             }
@@ -117,6 +129,7 @@ impl BrowserState {
             .lock()
             .map_err(|_| "Browser index could not be reset.")?;
         inner.pending = None;
+        inner.save = None;
         inner.used_request_ids.clear();
         inner.index = Index::default();
         let bytes =
@@ -317,6 +330,34 @@ pub fn handle(
         return Response::empty(Status::Error);
     }
     match request {
+        Request::ProposeSave {
+            origin,
+            credential,
+            change_form,
+            ..
+        } => {
+            let result =
+                crate::browser_save::stage(vault, origin, credential, change_form, |proposal| {
+                    let mut inner = state.inner.try_lock().map_err(|_| Status::Unavailable)?;
+                    BrowserState::expire(&mut inner);
+                    if inner.save.is_some() {
+                        return Err(Status::Unavailable);
+                    }
+                    inner.save = Some(proposal);
+                    Ok(())
+                });
+            if result == Status::Pending {
+                if let Some(app) = app {
+                    use tauri::Emitter;
+                    let handle = app.clone();
+                    let _ = app.run_on_main_thread(move || {
+                        crate::lifecycle::show_main(&handle);
+                        let _ = handle.emit("browser-save-request", ());
+                    });
+                }
+            }
+            Response::empty(result)
+        }
         Request::Match { origin, .. } => matches(vault, state, &origin),
         Request::BeginFill {
             origin,
@@ -498,6 +539,68 @@ pub fn browser_pending(state: State<'_, Arc<BrowserState>>) -> Result<Option<Pen
         .as_ref()
         .filter(|p| p.ready.is_none())
         .map(|p| p.info.clone()))
+}
+
+#[tauri::command]
+pub fn browser_save_pending(
+    state: State<'_, Arc<BrowserState>>,
+    vault: State<'_, Shared>,
+) -> Result<Option<crate::browser_save::SaveInfo>, String> {
+    let Ok(mut guard) = vault.inner.try_lock() else {
+        return Ok(None);
+    };
+    let mut inner = state
+        .inner
+        .lock()
+        .map_err(|_| "Browser request unavailable.")?;
+    BrowserState::expire(&mut inner);
+    if inner.save.as_ref().is_some_and(|s| {
+        !s.current(&vault) || (!s.awaiting_unlock() && !guard.vault.status().unlocked)
+    }) {
+        inner.save = None;
+    }
+    if let Some(save) = inner.save.as_mut() {
+        if let Err(error) = save.prepare(&mut guard.vault) {
+            inner.save = None;
+            return Err(error);
+        }
+    }
+    Ok(inner.save.as_ref().map(|s| s.info.clone()))
+}
+
+#[tauri::command]
+pub async fn resolve_browser_save(
+    state: State<'_, Arc<BrowserState>>,
+    vault: State<'_, Shared>,
+    token: String,
+    approve: bool,
+    entry_id: Option<String>,
+) -> Result<(), String> {
+    let state = state.inner().clone();
+    let vault = vault.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let proposal = {
+            let mut inner = state
+                .inner
+                .lock()
+                .map_err(|_| "Browser request unavailable.")?;
+            BrowserState::expire(&mut inner);
+            if inner.save.as_ref().is_none_or(|s| s.info.token != token) {
+                return Err("The save request expired. Submit the form again to retry.".into());
+            }
+            inner.save.take().expect("checked save request")
+        };
+        if !approve {
+            return Ok(());
+        }
+        proposal.commit(&vault, entry_id)?;
+        if let Ok(mut guard) = vault.inner.lock() {
+            state.refresh(&mut guard.vault);
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|_| "Could not finish saving the browser login.")?
 }
 #[tauri::command]
 pub fn reject_browser_fill(

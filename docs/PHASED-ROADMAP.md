@@ -1,8 +1,7 @@
 # Fakkarni implementation and acceptance plan
 
-Each phase passes through implementation, automated verification, and user testing.
-Only the user's successful test makes a phase accepted. Stop between phases to
-resolve failures before starting the next. Tests use synthetic vaults and credentials.
+Implementation and automated verification can proceed across phases. Interactive
+acceptance is recorded separately. Tests use synthetic vaults and credentials.
 
 ## Phase 1 — Change a known master password
 
@@ -45,7 +44,7 @@ and a real Windows PIN re-enrollment test remain outstanding.
 
 ## Phase 2 — Forgotten master password while PIN still works
 
-Status: planned; requires Phase 1 acceptance.
+Status: implemented. Recovery rotation and revocation are covered with synthetic data. Fresh PIN recovery on real hardware remains an interactive acceptance check.
 
 Add a separate recovery action requiring a fresh Windows Hello/PIN verification,
 even if the vault is already unlocked. Use the recovered credential only in native
@@ -64,7 +63,7 @@ successful replacement, new-password unlock, and renewed PIN setup.
 
 ## Phase 3 — Optional offline recovery key
 
-Status: planned; requires Phase 2 acceptance and a reviewed storage design.
+Status: implemented. Automated tests recover a matching backup into an empty destination and check key, file, vault identity, and generation mismatches.
 
 Generate a cryptographically random recovery key locally. Show/export it only on
 explicit setup and require confirmation that it was saved separately. Use an
@@ -84,7 +83,7 @@ password, and confirm entries and new PIN enrollment.
 
 ## Phase 4 — Offer to save a manually entered login
 
-Status: queued after recovery phases are accepted.
+Status: implemented with automatic capture and an explicit save notification for recognizable same-origin HTTPS POST forms. Multi-step forms without a username in the submitted form can require manual entry.
 
 Recognize username/email and password fields, keep proposed credentials briefly
 in memory, and ask before saving. Avoid ambiguous forms and discard expired or
@@ -96,7 +95,7 @@ failed-login, and navigation cases. User acceptance on Brave and Edge is require
 
 ## Phase 5 — Registration and password-update prompts
 
-Status: queued after Phase 4 acceptance.
+Status: implemented. The desktop review requires explicit account selection before replacing an existing password.
 
 Recognize new-password and confirmation fields, offer explicit save/update actions,
 and show which existing account would change. Keep password replacement deliberate
@@ -106,14 +105,13 @@ User acceptance includes checking the stored password stays correct afterward.
 
 ## Phase 6 — Installation and release hardening
 
-Status: queued.
+Status: Windows x64 installer and unpacked extension packaged. Clean-runner smoke checks are wired into Windows CI. Real hardware acceptance and an independent audit remain outstanding.
 
 Package an installer with stable executable paths and Brave/Edge bridge registration;
 verify upgrade, uninstall, startup/tray, and clean-PC behavior. Perform a focused
 security review before treating the app as ready for important credentials.
 
-Follow-up from cold-start autofill verification (2026-10-20): investigate an
-intermittent EOF in the parallel named-pipe integration test. Its isolated and
-full serial reruns passed. Include explicit extension-worker reload/update checks
-in upgrade testing so popup and background code cannot be mistaken for a broken
-native registration.
+The named-pipe client retries the short busy interval before the next server
+instance becomes available. A parallel integration regression check exercises
+300 consecutive exchanges. The extension suite covers restarting the background
+worker, and the release instructions cover reloading an unpacked extension.

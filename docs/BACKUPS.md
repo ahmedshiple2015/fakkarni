@@ -31,6 +31,14 @@ After a successful import the app stays locked, outstanding browser fills are ca
 
 The file chooser and all file operations run in native Rust; the frontend receives only filenames, counts, an expiring preview token, and result paths. No filesystem plugin access is granted to the frontend. Prepared restores retain encrypted snapshots, not a decrypted database or master key.
 
+## Forgotten master password
+
+If PIN unlock still works on this PC, use **Reset master password with PIN** and complete a fresh Windows Security verification. Fakkarni creates an encrypted safety copy, changes the master password, and locks the vault. Unlock with the new password and enroll your PIN again.
+
+To prepare for a PC loss, create a recovery key in Settings and export an encrypted vault backup. Keep the displayed key separate from the recovery file and backup. On a PC without a vault, choose **Recover an encrypted backup**, then supply the key, recovery file, and matching encrypted backup when prompted. The app creates a vault protected by a new master password.
+
+Keep a new set after changing or resetting your master password. Older sets can still recover matching older backups, and changing the password cannot revoke copies already held elsewhere. Reusing a former master password can restore access to current data for anyone who already knows it. If you lose the master password and both recovery options, access to the vault is lost.
+
 ## Verification
 
 Synthetic tests cover exact encrypted export, refusal to overwrite, wrong passwords, damaged and oversized files, excessive KDF settings, changed source/target files, existing instance locks, recovery-copy failures, forced Windows rename failure, missing-vault import, session revocation, expiry, and post-restore browser cleanup. Desktop editor regression tests cover ignored autofilled password fields and explicit password replacement. These tests have not reproduced the earlier username/password overwrite report, so its original cause remains unconfirmed.
